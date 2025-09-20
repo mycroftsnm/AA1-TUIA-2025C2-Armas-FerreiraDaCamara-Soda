@@ -10,6 +10,7 @@ dependencies = [
     "jupyter>=1.1.1",
     "matplotlib>=3.10.6",
     "nbstripout>=0.8.1",
+    "notebook>=7.4.5",
     "numpy>=2.3.3",
     "pandas>=2.3.2",
     "plotly>=6.3.0",
