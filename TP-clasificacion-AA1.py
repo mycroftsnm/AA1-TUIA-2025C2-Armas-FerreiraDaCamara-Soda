@@ -28,11 +28,15 @@ df = pd.read_csv('weatherAUS.csv')
 # Revisa si hay filas duplicadas
 df.duplicated().sum() # 0 filas duplicadas
 
-# Revisa las columnas y sus tipos de datos
-df.dtypes
+pd.set_option('display.max_columns', None)
+df.describe(include='all')
 
 # %% [markdown]
 # # Limpieza y preprocesamiento
+
+# %%
+# Drop de filas con NaN en la feature objetivo
+df = df.dropna(subset=['RainTomorrow'])
 
 # %%
 df['RainToday'] = df['RainToday'].map({'Yes': 1, 'No': 0}).astype('Int8')
@@ -43,6 +47,11 @@ df['Cloud3pm'].value_counts(dropna=False)
 
 # %%
 df['Cloud9am'].value_counts(dropna=False)
+
+# %%
+# Cambia el tipo de dato de las variables Cloud9am y Cloud3pm a Int8 para ahorrar memoria
+df['Cloud9am'] = df['Cloud9am'].astype('Int8')
+df['Cloud3pm'] = df['Cloud3pm'].astype('Int8')
 
 # %% [markdown]
 # Por el rango de valores que asumen las variables **Cloud9am** y **Cloud3pm** asumimos que dichas variables están medidas en octas, que es la unidad de medida empleada para describir la nubosidad observable en un determinado lugar. https://es.wikipedia.org/wiki/Octa
