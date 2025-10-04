@@ -35,6 +35,9 @@ df.describe(include='all')
 # # Limpieza y preprocesamiento
 
 # %%
+df.info(verbose=True)
+
+# %%
 # Drop de filas con NaN en la feature objetivo
 df = df.dropna(subset=['RainTomorrow'])
 
@@ -55,3 +58,60 @@ df['Cloud3pm'] = df['Cloud3pm'].astype('Int8')
 
 # %% [markdown]
 # Por el rango de valores que asumen las variables **Cloud9am** y **Cloud3pm** asumimos que dichas variables están medidas en octas, que es la unidad de medida empleada para describir la nubosidad observable en un determinado lugar. https://es.wikipedia.org/wiki/Octa
+
+# %%
+
+# %%
+# Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
+
+df['Climate'] = df['Location'].replace({
+    'Adelaide': 'Temperate',
+    'Albany': 'Temperate',
+    'Albury': 'Temperate',
+    'AliceSprings': 'Arid',
+    'BadgerysCreek': 'Temperate',
+    'Ballarat': 'Temperate',
+    'Bendigo': 'Temperate',
+    'Brisbane': 'Temperate',
+    'Cairns': 'Tropical',
+    'Canberra': 'Temperate',
+    'Cobar': 'Arid',
+    'CoffsHarbour': 'Temperate',
+    'Dartmoor': 'Temperate',
+    'Darwin': 'Tropical',
+    'GoldCoast': 'Temperate',
+    'Hobart': 'Temperate',
+    'Katherine': 'Tropical',
+    'Launceston': 'Temperate',
+    'Melbourne': 'Temperate',
+    'Mildura': 'Arid',
+    'Moree': 'Temperate',
+    'MountGambier': 'Temperate',
+    'MountGinini': 'Temperate',
+    'Newcastle': 'Temperate',
+    'Nhil': 'Temperate',
+    'NorahHead': 'Temperate',
+    'NorfolkIsland': 'Temperate',
+    'Nuriootpa': 'Temperate',
+    'PearceRAAF': 'Mediterranean',
+    'Penrith': 'Temperate',
+    'Perth': 'Temperate',
+    'PerthAirport': 'Temperate',
+    'Portland': 'Temperate',
+    'Richmond': 'Temperate',
+    'Sale': 'Temperate',
+    'SalmonGums': 'Arid',
+    'Sydney': 'Temperate',
+    'SydneyAirport': 'Temperate',
+    'Townsville': 'Tropical',
+    'Tuggeranong': 'Temperate',
+    'Uluru': 'Arid',
+    'WaggaWagga': 'Temperate',
+    'Walpole': 'Temperate',
+    'Watsonia': 'Temperate',
+    'Williamtown': 'Temperate',
+    'Witchcliffe': 'Temperate',
+    'Wollongong': 'Temperate',
+    'Woomera': 'Arid',
+})
+
