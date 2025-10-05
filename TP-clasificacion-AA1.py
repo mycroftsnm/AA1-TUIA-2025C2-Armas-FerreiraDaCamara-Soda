@@ -237,9 +237,9 @@ fig, axes = plt.subplots(4, 4, figsize=(20, 18))
 
 for i, var in enumerate(variables_numericas):
     if var == 'Cloud3pm' or var == 'Cloud9am':
-        sns.countplot(data=df, x=var, hue='Climate', palette='muted', alpha=0.7, ax=axes[i // 4, i % 4])
+        sns.countplot(data=df, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'])
     else:
-        sns.kdeplot(data=df, x=var, hue='Climate', palette='muted', alpha=0.7, ax=axes[i // 4, i % 4])
+        sns.kdeplot(data=df, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'])
 
 plt.tight_layout()
 plt.show()
@@ -248,7 +248,7 @@ plt.show()
 fig = plt.figure(figsize=(16, 9))
 
 
-grafico = sns.countplot(data=df, x='RainTomorrow', hue='RainToday', palette='muted', alpha=0.7)
+grafico = sns.countplot(data=df, x='RainTomorrow', hue='RainToday', palette='muted')
 
 totales = df.groupby('RainTomorrow').size()
 
