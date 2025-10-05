@@ -8,9 +8,9 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: Python (myenv)
+#     display_name: Python 3
 #     language: python
-#     name: myenv
+#     name: python3
 # ---
 
 # %%
@@ -132,6 +132,10 @@ fig.update_layout(width=1600,height=900)
 fig.update_traces(marker_size=20)
 
 fig.show()
+
+# %% [markdown]
+# Observamos que tenemos datos de muchas ubicaciones distintas, implicando que tendremos que generar una gran cantidad de variables dummys lo que corre riesgo de overfitting. Vamos a reducir la dimensionalidad agrupando ubicaciones según su sus tipos de clima, siguiendo la clasificación de Koppen. 
+
 # %%
 # Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
 
@@ -186,6 +190,31 @@ location_koppen = {
     'Woomera': 'Arid',
 }
 
+# %%
+# Genera la nueva variable en el df original y en el df de coordenadas
 df['Climate'] = df['Location'].map(location_koppen)
 
+australia_coords['Climate'] = australia_coords['location'].map(location_koppen)
 
+# %%
+import plotly.express as px
+
+fig = px.scatter_geo(
+    australia_coords,
+    lat='lat',
+    lon='lon',
+    scope='oceania',
+    color='Climate',
+    hover_name='location',
+    projection='natural earth',
+    size='frecuencia',
+)
+
+# Ajusta los límites del mapa para centrarse en Australia
+fig.update_geos(
+    lonaxis=dict(range=[min(australia_coords['lon'])-5, max(australia_coords['lon'])+5]),
+    lataxis=dict(range=[min(australia_coords['lat'])-5, max(australia_coords['lat'])+5]),
+)
+fig.update_layout(width=1600,height=900)
+
+fig.show()
