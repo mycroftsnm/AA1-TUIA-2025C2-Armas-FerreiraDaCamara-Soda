@@ -56,8 +56,47 @@ df['Cloud9am'].value_counts(dropna=False)
 df['Cloud9am'] = df['Cloud9am'].astype('Int8')
 df['Cloud3pm'] = df['Cloud3pm'].astype('Int8')
 
+
 # %% [markdown]
 # Por el rango de valores que asumen las variables **Cloud9am** y **Cloud3pm** asumimos que dichas variables están medidas en octas, que es la unidad de medida empleada para describir la nubosidad observable en un determinado lugar. https://es.wikipedia.org/wiki/Octa
+
+# %%
+def generar_csv_coordenadas(df):
+    import time
+    import pandas as pd
+    from geopy.geocoders import Nominatim
+
+    ubicaciones = df['Location'].unique()
+    australia_coords = pd.DataFrame({"location": ubicaciones})
+
+    geolocator = Nominatim(user_agent="australia_mapper")
+
+    lats, lons = [], []
+
+    def normalizar_nombre_ubicacion(ubicacion):
+        for i in range(1, len(ubicacion)):
+            if ubicacion[i].isupper():
+                return ubicacion[:i] + " " + ubicacion[i:]
+        return ubicacion
+
+    nombres_ubicaciones =  map(normalizar_nombre_ubicacion, ubicaciones)
+
+    for ubicacion in nombres_ubicaciones:
+        result = geolocator.geocode(f"{ubicacion}, Australia", timeout=10)
+        if result:
+            lats.append(result.latitude)
+            lons.append(result.longitude)
+        else:
+            print('No se encontró', ubicacion)
+            lats.append(None)
+            lons.append(None)
+        time.sleep(1.1)  # máx 1 req/s
+
+
+    australia_coords["lat"] = lats
+    australia_coords["lon"] = lons
+
+    australia_coords.to_csv("australian_locations.csv", index=False)
 
 # %%
 # Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
