@@ -21,6 +21,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.express as px
 
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
 # %%
 # Carga el dataset en un dataframe
 df = pd.read_csv('weatherAUS.csv')
@@ -50,11 +53,6 @@ df['Cloud3pm'].value_counts(dropna=False)
 
 # %%
 df['Cloud9am'].value_counts(dropna=False)
-
-# %%
-# Cambia el tipo de dato de las variables Cloud9am y Cloud3pm a Int8 para ahorrar memoria
-df['Cloud9am'] = df['Cloud9am'].astype('Int8')
-df['Cloud3pm'] = df['Cloud3pm'].astype('Int8')
 
 
 # %% [markdown]
@@ -218,3 +216,76 @@ fig.update_geos(
 fig.update_layout(width=1600,height=900)
 
 fig.show()
+
+# %% [markdown]
+# ### Split Train/Test
+
+# %%
+# Separa el 80% para train y 20% para test
+train, test= train_test_split(df, test_size=0.2, random_state=1)
+
+# %% [markdown]
+# # EDA
+
+# %%
+variables_numericas = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+print(f"Hay {len(variables_numericas)} variables_numericas:\n{variables_numericas}")
+
+# %%
+# Distribución de variables
+fig, axes = plt.subplots(4, 4, figsize=(20, 18))
+
+for i, var in enumerate(variables_numericas):
+    if var == 'Cloud3pm' or var == 'Cloud9am':
+        sns.countplot(data=df, x=var, hue='Climate', palette='muted', alpha=0.7, ax=axes[i // 4, i % 4])
+    else:
+        sns.kdeplot(data=df, x=var, hue='Climate', palette='muted', alpha=0.7, ax=axes[i // 4, i % 4])
+
+plt.tight_layout()
+plt.show()
+
+# %%
+fig = plt.figure(figsize=(16, 9))
+
+
+grafico = sns.countplot(data=df, x='RainTomorrow', hue='RainToday', palette='muted', alpha=0.7)
+
+totales = df.groupby('RainTomorrow').size()
+
+# Agrega las anotaciones
+for container in grafico.containers:
+    for i in range(len(container)):
+        bar = container[i]
+        height = bar.get_height()
+        percentage = (height / totales[i]) * 100
+        grafico.text(
+            bar.get_x() + bar.get_width() / 2,
+            height,
+            f'{percentage:.4f}%',
+            ha='center', va='bottom', fontsize=12, color='black')
+
+plt.xlabel('¿Llovió hoy?', fontsize=14)
+plt.xticks(ticks=[0, 1], labels=['No', 'Sí'])
+
+
+
+plt.legend(title='¿Llovió ayer?', title_fontsize=14, labels=['No', 'Sí'], fontsize=12)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+contingency_table = pd.crosstab(df['RainTomorrow'], df['RainToday'], normalize='index') * 100
+
+plt.figure(figsize=(8, 6)) # Ajusta el tamaño si es necesario
+sns.heatmap(contingency_table, annot=True, cmap='Purples', fmt='.2f', cbar=False)
+
+plt.xticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
+plt.yticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
+
+plt.xlabel('¿Llovió hoy?')
+plt.ylabel('¿Llovió Ayer?')
+plt.show()
+
+# %%
+print(contingency_table)
