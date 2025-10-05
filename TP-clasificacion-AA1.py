@@ -60,11 +60,9 @@ df['Cloud3pm'] = df['Cloud3pm'].astype('Int8')
 # Por el rango de valores que asumen las variables **Cloud9am** y **Cloud3pm** asumimos que dichas variables están medidas en octas, que es la unidad de medida empleada para describir la nubosidad observable en un determinado lugar. https://es.wikipedia.org/wiki/Octa
 
 # %%
-
-# %%
 # Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
 
-df['Climate'] = df['Location'].replace({
+location_koppen = {
     'Adelaide': 'Temperate',
     'Albany': 'Temperate',
     'Albury': 'Temperate',
@@ -93,7 +91,7 @@ df['Climate'] = df['Location'].replace({
     'NorahHead': 'Temperate',
     'NorfolkIsland': 'Temperate',
     'Nuriootpa': 'Temperate',
-    'PearceRAAF': 'Mediterranean',
+    'PearceRAAF': 'Temperate',
     'Penrith': 'Temperate',
     'Perth': 'Temperate',
     'PerthAirport': 'Temperate',
@@ -113,5 +111,8 @@ df['Climate'] = df['Location'].replace({
     'Witchcliffe': 'Temperate',
     'Wollongong': 'Temperate',
     'Woomera': 'Arid',
-})
+}
+
+df['Climate'] = df['Location'].map(location_koppen)
+
 
