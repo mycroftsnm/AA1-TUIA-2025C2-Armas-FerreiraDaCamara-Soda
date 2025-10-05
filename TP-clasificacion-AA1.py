@@ -99,6 +99,40 @@ def generar_csv_coordenadas(df):
     australia_coords.to_csv("australian_locations.csv", index=False)
 
 # %%
+# generar_csv_coordenadas(df) # Descomentar para generar el CSV
+
+# %%
+# Df con coordenadas
+australia_coords = pd.read_csv("australian_locations.csv")
+
+# Genera variable frecuencia para cada ubicación
+australia_coords['frecuencia'] = df['Location'].value_counts().values
+
+# %%
+import plotly.express as px
+
+fig = px.scatter_geo(
+    australia_coords,
+    lat='lat',
+    lon='lon',
+    scope='oceania',
+    color='frecuencia',
+    hover_name='location',
+    projection='natural earth',
+    color_continuous_scale='Purp',
+)
+
+# Ajusta los límites del mapa para centrarse en Australia
+fig.update_geos(
+    lonaxis=dict(range=[min(australia_coords['lon'])-5, max(australia_coords['lon'])+5]),
+    lataxis=dict(range=[min(australia_coords['lat'])-5, max(australia_coords['lat'])+5]),
+)
+fig.update_layout(width=1600,height=900)
+
+fig.update_traces(marker_size=20)
+
+fig.show()
+# %%
 # Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
 
 location_koppen = {
