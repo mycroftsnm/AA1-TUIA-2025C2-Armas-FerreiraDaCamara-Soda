@@ -132,7 +132,7 @@ fig.update_traces(marker_size=20)
 fig.show()
 
 # %% [markdown]
-# Observamos que tenemos datos de muchas ubicaciones distintas, implicando que tendremos que generar una gran cantidad de variables dummys lo que corre riesgo de overfitting. Vamos a reducir la dimensionalidad agrupando ubicaciones según su sus tipos de clima, siguiendo la clasificación de Koppen. 
+# Observamos que tenemos datos de muchas ubicaciones distintas, implicando que tendremos que generar una gran cantidad de variables dummys lo que corre riesgo de overfitting. Vamos a reducir la dimensionalidad agrupando ubicaciones según sus tipos de clima, siguiendo la clasificación de Koppen. 
 
 # %%
 # Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
@@ -237,55 +237,91 @@ fig, axes = plt.subplots(4, 4, figsize=(20, 18))
 
 for i, var in enumerate(variables_numericas):
     if var == 'Cloud3pm' or var == 'Cloud9am':
-        sns.countplot(data=df, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'])
+        sns.countplot(data=train, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'])
     else:
-        sns.kdeplot(data=df, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'])
+        sns.kdeplot(data=train, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'], common_norm=False)
 
 plt.tight_layout()
 plt.show()
 
 # %%
-fig = plt.figure(figsize=(16, 9))
+ayer_segun_hoy = pd.crosstab(train['RainTomorrow'], train['RainToday'], normalize='index')
+hoy_segun_ayer = pd.crosstab(train['RainToday'], train['RainTomorrow'], normalize='index')
 
 
-grafico = sns.countplot(data=df, x='RainTomorrow', hue='RainToday', palette='muted')
+fig, axes = plt.subplots(1, 2, figsize=(16, 9))
 
-totales = df.groupby('RainTomorrow').size()
+sns.heatmap(hoy_segun_ayer, annot=True, cmap='Purples', fmt='.3f', cbar=False, ax=axes[0])
+sns.heatmap(ayer_segun_hoy, annot=True, cmap='Purples', fmt='.3f', cbar=False, ax=axes[1])
 
-# Agrega las anotaciones
-for container in grafico.containers:
-    for i in range(len(container)):
-        bar = container[i]
-        height = bar.get_height()
-        percentage = (height / totales[i]) * 100
-        grafico.text(
-            bar.get_x() + bar.get_width() / 2,
-            height,
-            f'{percentage:.4f}%',
-            ha='center', va='bottom', fontsize=12, color='black')
+axes[0].set_title('Proporción de días que llovió hoy según si llovió ayer')
+axes[0].set_xticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
+axes[0].set_yticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
+axes[0].set_xlabel('¿Llovió hoy?')
+axes[0].set_ylabel('¿Llovió ayer?')
 
-plt.xlabel('¿Llovió hoy?', fontsize=14)
-plt.xticks(ticks=[0, 1], labels=['No', 'Sí'])
+axes[1].set_title('Proporción de días que llovió ayer según si llovió hoy')
+axes[1].set_xticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
+axes[1].set_yticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
+axes[1].set_xlabel('¿Llovió ayer?')
+axes[1].set_ylabel('¿Llovió hoy?')
 
+plt.show()
 
+# %%
+train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .999, .9999])
 
-plt.legend(title='¿Llovió ayer?', title_fontsize=14, labels=['No', 'Sí'], fontsize=12)
+# %%
+train = train[train['Rainfall'] < 188]
+
+# %%
+train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .999, .9999])
+
+# %%
+# Crea los bins para Rainfall
+bins = [float('-inf'), 0, 1, 5, 10, 25, 188]
+
+intervalos = pd.cut(train['Rainfall'], bins=bins, right=True)
+
+train['Rainfall_range'] = intervalos
+# Convierte los intervalos a strings para que Seaborn pueda manejarlos
+train['Rainfall_range'] = train['Rainfall_range'].astype(str)
+
+# Asegura que los rangos mantengan el orden
+train['Rainfall_range'] = pd.Categorical(
+    train['Rainfall_range'],
+    categories=[str(interval) for interval in intervalos.cat.categories],
+    ordered=True
+)
+
+frecuencias = train['Rainfall_range'].value_counts(normalize=True).sort_index()
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+sns.histplot(
+    data=train,
+    x='Rainfall_range',
+    hue='RainTomorrow',
+    palette='muted',
+    multiple='fill',  # Mostrar proporciones dentro de cada bin
+    ax=ax1,
+)
+
+ax1.set_xlabel('Rango de Lluvia (mm)')
+ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
+ax1.set_title('Distribución de mm de lluvia registrados y si llovió al día siguiente')
+
+ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
+
+# Segundo eje para la proporción absoluta
+ax2 = ax1.twinx()
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Proporción absoluta')
+ax2.legend(loc='upper left')
+
+#no mostrar eje secundario ya que tiene la misma escala que el otro
+ax2.set_axis_off()
+ax2.set_ylim(0, 1)
 
 plt.tight_layout()
 plt.show()
-
-# %%
-contingency_table = pd.crosstab(df['RainTomorrow'], df['RainToday'], normalize='index') * 100
-
-plt.figure(figsize=(8, 6)) # Ajusta el tamaño si es necesario
-sns.heatmap(contingency_table, annot=True, cmap='Purples', fmt='.2f', cbar=False)
-
-plt.xticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
-plt.yticks(ticks=[0.5, 1.5], labels=['No', 'Sí'])
-
-plt.xlabel('¿Llovió hoy?')
-plt.ylabel('¿Llovió Ayer?')
-plt.show()
-
-# %%
-print(contingency_table)
