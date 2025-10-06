@@ -273,9 +273,8 @@ train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .999, 
 
 # %%
 train = train[train['Rainfall'] < 188]
+test = test[test['Rainfall'] < 188]
 
-# %%
-train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .999, .9999])
 
 # %%
 # Crea los bins para Rainfall
@@ -319,9 +318,19 @@ ax2 = ax1.twinx()
 ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Proporción absoluta')
 ax2.legend(loc='upper left')
 
-#no mostrar eje secundario ya que tiene la misma escala que el otro
+# Oculta el eje y secundario; tiene la misma escala que el principal.
 ax2.set_axis_off()
 ax2.set_ylim(0, 1)
 
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# ### Variable **Evaporation**
+
+# %%
+train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .999, .9999])
+
+# %%
+train = train[train['Evaporation'] < 71]
+test = test[test['Evaporation'] < 71]
