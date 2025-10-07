@@ -245,6 +245,17 @@ plt.tight_layout()
 plt.show()
 
 # %%
+train[variables_numericas]
+
+# %%
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+sns.heatmap(data=train[variables_numericas].corr(), ax=ax1, annot=True, vmin=-1, vmax=1)
+
+plt.tight_layout()
+plt.show()
+
+# %%
 ayer_segun_hoy = pd.crosstab(train['RainTomorrow'], train['RainToday'], normalize='index')
 hoy_segun_ayer = pd.crosstab(train['RainToday'], train['RainTomorrow'], normalize='index')
 
@@ -278,7 +289,7 @@ test = test[test['Rainfall'] < 188]
 
 # %%
 # Crea los bins para Rainfall
-bins = [float('-inf'), 0, 1, 5, 10, 25, 188]
+bins = [float('-inf'), 0, 1, 5, float('inf')]
 
 intervalos = pd.cut(train['Rainfall'], bins=bins, right=True)
 
@@ -315,7 +326,7 @@ ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia sig
 
 # Segundo eje para la proporción absoluta
 ax2 = ax1.twinx()
-ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Proporción absoluta')
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
 ax2.legend(loc='upper left')
 
 # Oculta el eje y secundario; tiene la misma escala que el principal.
@@ -334,3 +345,55 @@ train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .99
 # %%
 train = train[train['Evaporation'] < 71]
 test = test[test['Evaporation'] < 71]
+
+# %%
+train['Evaporation_range'].value_counts()
+
+# %%
+# Crea los bins para Evaporation
+bins = [float('-inf'), 2.5, 5, 7.5, float('inf')]
+
+intervalos = pd.cut(train['Evaporation'], bins=bins, right=True)
+
+train['Evaporation_range'] = intervalos
+# Convierte los intervalos a strings para que Seaborn pueda manejarlos
+train['Evaporation_range'] = train['Evaporation_range'].astype(str)
+
+# Asegura que los rangos mantengan el orden
+train['Evaporation_range'] = pd.Categorical(
+    train['Evaporation_range'],
+    categories=[str(interval) for interval in intervalos.cat.categories],
+    ordered=True
+)
+
+frecuencias = train['Evaporation_range'].value_counts(normalize=True).sort_index()
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+sns.histplot(
+    data=train,
+    x='Evaporation_range',
+    hue='RainTomorrow',
+    palette='muted',
+    multiple='fill',  # Mostrar proporciones dentro de cada bin
+    ax=ax1,
+)
+
+ax1.set_xlabel('Rango de Evaporación (mm)')
+ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
+ax1.set_title('Distribución de mm de evaporación registrados y si llovió al día siguiente')
+
+ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
+
+# Segundo eje para la proporción absoluta
+ax2 = ax1.twinx()
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
+ax2.legend(loc='upper left')
+
+# Oculta el eje y secundario; tiene la misma escala que el principal.
+ax2.set_axis_off()
+ax2.set_ylim(0, 1)
+
+plt.tight_layout()
+plt.show()
