@@ -1,0 +1,16 @@
+[project]
+name = "aa1-tuia-2025c2-armas-ferreiradacamara-soda"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "jupyter>=1.1.1",
+    "jupytext>=1.17.3",
+    "matplotlib>=3.10.6",
+    "numpy>=2.3.3",
+    "pandas>=2.3.3",
+    "plotly>=6.3.1",
+    "scikit-learn>=1.7.2",
+    "seaborn>=0.13.2",
+]
