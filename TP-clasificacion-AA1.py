@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: aa1-tuia-2025c2-armas-ferreiradacamara-soda
 #     language: python
 #     name: python3
 # ---
@@ -34,11 +34,72 @@ df.duplicated().sum() # 0 filas duplicadas
 pd.set_option('display.max_columns', None)
 df.describe(include='all')
 
+# %%
+df
+
+# %%
+print(f"El dataframe posee {len(df.columns)} variables:\n" + "\n".join(f"  - {col}" for col in df.columns))
+
 # %% [markdown]
 # # Limpieza y preprocesamiento
 
+# %% [markdown]
+# Análsis de faltantes:
+
+# %%
+faltantes_df = pd.DataFrame({
+    'NaN': df.isna().sum(),
+    '%': (df.isna().sum() / len(df) * 100).round(2)
+}).sort_values('NaN', ascending=False)
+faltantes_df
+
+# %%
+plt.figure(figsize=(10, 5))
+ax = sns.barplot(x=faltantes_df.index, y=faltantes_df['%'], color='coral')
+plt.title('Porcentaje de valores faltantes por variable')
+plt.xlabel('Variables')
+plt.ylabel('% de NaN')
+plt.xticks(rotation=45, ha='right')
+
+for i, idx in enumerate(faltantes_df.index):
+    ax.text(i, faltantes_df.loc[idx, '%'], f'{int(faltantes_df.loc[idx, "NaN"])}',
+            ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+plt.grid(axis='y', alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Todas las variables poseen algún valor faltante con excepción de `Date` y de `Location`. Observamos que `Sunshine`, `Evaporation`, `Cloud3pm` y `Cloud9am` son las que presentan más valores faltantes: 47.69%, 42.79%, 40.15%, 37.74% respectivamente.
+
+# %%
+nan_por_fila = df.isna().sum(axis=1)
+
+distribucion_nan = pd.DataFrame({
+    'Cantidad_filas': nan_por_fila.value_counts().sort_index(),
+    '%': (nan_por_fila.value_counts(normalize=True) * 100).sort_index().round(2)
+})
+
+distribucion_nan
+
+# %% [markdown]
+# Existen 56420 observaciones sin faltantes, lo que representa un 38.8% del dataset. El resto posee al menos un dato faltante.
+
 # %%
 df.info(verbose=True)
+
+# %% [markdown]
+# Sunshine
+
+# %%
+# distribución de Sunshine según RainTomorrow
+df.groupby('RainTomorrow')['Sunshine'].describe(percentiles=[0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999])
+
+# %%
+df["RainTomorrow"].value_counts(normalize=True)
+
+# %% [markdown]
+# El dataset está desbalanceado. Del 100% de observaciones
 
 # %%
 # Drop de filas con NaN en la feature objetivo
@@ -47,6 +108,9 @@ df = df.dropna(subset=['RainTomorrow'])
 # %%
 df['RainToday'] = df['RainToday'].map({'Yes': 1, 'No': 0}).astype('Int8')
 df['RainTomorrow'] = df['RainTomorrow'].map({'Yes': 1, 'No': 0}).astype('Int8')
+
+# %% [markdown]
+# Análisis de las variables "Cloud"
 
 # %%
 df['Cloud3pm'].value_counts(dropna=False)
