@@ -35,7 +35,7 @@ pd.set_option('display.max_columns', None)
 df.describe(include='all')
 
 # %%
-df
+df.describe()
 
 # %%
 print(f"El dataframe posee {len(df.columns)} variables:\n" + "\n".join(f"  - {col}" for col in df.columns))
@@ -54,6 +54,13 @@ faltantes_df = pd.DataFrame({
 faltantes_df
 
 # %%
+faltantes_df = pd.DataFrame({
+    'NaN': df.isna().sum(),
+    '%': (df.isna().sum() / len(df) * 100).round(2)
+}).sort_values('NaN', ascending=False)
+faltantes_df
+
+# %%
 plt.figure(figsize=(10, 5))
 ax = sns.barplot(x=faltantes_df.index, y=faltantes_df['%'], color='coral')
 plt.title('Porcentaje de valores faltantes por variable')
@@ -63,7 +70,7 @@ plt.xticks(rotation=45, ha='right')
 
 for i, idx in enumerate(faltantes_df.index):
     ax.text(i, faltantes_df.loc[idx, '%'], f'{int(faltantes_df.loc[idx, "NaN"])}',
-            ha='center', va='bottom', fontsize=9, fontweight='bold')
+            ha='center', va='bottom', fontsize=8, fontweight='bold')
 
 plt.grid(axis='y', alpha=0.3)
 plt.tight_layout()
@@ -71,6 +78,16 @@ plt.show()
 
 # %% [markdown]
 # Todas las variables poseen algún valor faltante con excepción de `Date` y de `Location`. Observamos que `Sunshine`, `Evaporation`, `Cloud3pm` y `Cloud9am` son las que presentan más valores faltantes: 47.69%, 42.79%, 40.15%, 37.74% respectivamente.
+
+# %%
+nan_por_fila = df.isna().sum(axis=1)
+
+distribucion_nan = pd.DataFrame({
+    'Cantidad_filas': nan_por_fila.value_counts().sort_index(),
+    '%': (nan_por_fila.value_counts(normalize=True) * 100).sort_index().round(2)
+})
+
+distribucion_nan
 
 # %%
 nan_por_fila = df.isna().sum(axis=1)
@@ -96,10 +113,10 @@ df.info(verbose=True)
 df.groupby('RainTomorrow')['Sunshine'].describe(percentiles=[0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999])
 
 # %%
-df["RainTomorrow"].value_counts(normalize=True)
+df["RainTomorrow"].value_counts(normalize=True).round(2)
 
 # %% [markdown]
-# El dataset está desbalanceado. Del 100% de observaciones
+# El dataset está desbalanceado. 78% clase 0 u 22% clase 1.
 
 # %%
 # Drop de filas con NaN en la feature objetivo
@@ -118,9 +135,88 @@ df['Cloud3pm'].value_counts(dropna=False)
 # %%
 df['Cloud9am'].value_counts(dropna=False)
 
-
 # %% [markdown]
 # Por el rango de valores que asumen las variables **Cloud9am** y **Cloud3pm** asumimos que dichas variables están medidas en octas, que es la unidad de medida empleada para describir la nubosidad observable en un determinado lugar. https://es.wikipedia.org/wiki/Octa
+
+# %% [markdown]
+# A continuación se imputan valores faltantes de ciudades con los valores de lugares cercanos o incluso que se encuentran dentro de las mismas locaciones. Por ejemplo, completamos faltantes de Sydney con los de SydneyAirport registrados el mismo día.
+#
+# Identificamos que esto sucede en 5 locaciones:
+# - 'SydneyAirport': 'Sydney',
+# - 'MelbourneAirport': 'Melbourne',
+# - 'PerthAirport': 'Perth',
+# - 'Williamtown': 'Newcastle', (Williamtown es el aeropuerto de Newcastle)
+# - 'PearceRAAF': 'Perth, (Base aérea muy cerca de Perth)
+
+# %%
+# Diccionario para mapear lugares dentro de ciudades (o cercanos) a sus ciudades principales
+location_map = {
+    'SydneyAirport': 'Sydney',
+    'MelbourneAirport': 'Melbourne',
+    'PerthAirport': 'Perth',
+    'Williamtown': 'Newcastle', # Williamtown es el aeropuerto de Newcastle
+    'PearceRAAF': 'Perth'      # Base aérea muy cerca de Perth
+}
+
+# Columnas numéricas
+numeric_cols = [
+    'MinTemp', 'MaxTemp', 'Rainfall', 'Evaporation', 'Sunshine', 
+    'WindGustSpeed', 'WindSpeed9am', 'WindSpeed3pm', 'Humidity9am', 
+    'Humidity3pm', 'Pressure9am', 'Pressure3pm', 'Cloud9am', 
+    'Cloud3pm', 'Temp9am', 'Temp3pm'
+]
+
+
+# Columna 'Date' a formato datetime
+df['Date'] = pd.to_datetime(df['Date'])
+
+
+# Imputación cruzada de datos faltantes
+
+# Hacemos una copia para no modificar el original mientras iteramos
+df_imputed = df.copy()
+
+for airport, city in location_map.items():
+    # Filtramos los datos solo para el par ciudad/aeropuerto actual
+    city_rows = df['Location'] == city
+    airport_rows = df['Location'] == airport
+
+    # Creamos vistas temporales alineadas por fecha para facilitar la imputación
+    city_data = df[city_rows].set_index('Date')[numeric_cols]
+    airport_data = df[airport_rows].set_index('Date')[numeric_cols]
+    
+    # Rellenamos faltantes en la ciudad con datos del aeropuerto
+    imputed_city_data = city_data.fillna(airport_data)
+    
+    # Rellenamos faltantes en el aeropuerto con datos de la ciudad
+    imputed_airport_data = airport_data.fillna(city_data)
+    
+    # Actualizamos el DataFrame principal con los datos imputados
+    # Usamos .reindex como city_data.index para asegurar el alineamiento correcto
+    df_imputed.loc[city_rows, numeric_cols] = imputed_city_data.reindex(city_data.index).values
+    df_imputed.loc[airport_rows, numeric_cols] = imputed_airport_data.reindex(airport_data.index).values
+
+df = df_imputed
+
+# # Método para agrupar las variables con sus aeropuertos cercanos
+# df['Location'].replace(location_map, inplace=True) # Reemplaza los valores que coinciden con las keys del diccionario por sus values
+
+# # Mergeamos las filas duplicadas (mismo día y locación).
+# # Para las numéricas, calculamos la media. Para el resto (categóricas), tomamos el primer valor no nulo.
+# agg_functions = {col: 'mean' for col in numeric_cols}
+# categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+
+# # No queremos agrupar 'Location' ya que es una de nuestras claves de agrupación
+# if 'Location' in categorical_cols:
+#     categorical_cols.remove('Location')
+
+# for col in categorical_cols:
+#     agg_functions[col] = 'first'
+
+# # Agrupamos por fecha y locación y aplicamos las funciones de agregación
+# df_final = df.groupby(['Date', 'Location']).agg(agg_functions).reset_index()
+
+# print(f"Dimensiones finales del DataFrame: {df_final.shape}")
 
 # %%
 def generar_csv_coordenadas(df):
@@ -409,9 +505,6 @@ train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .99
 # %%
 train = train[train['Evaporation'] < 71]
 test = test[test['Evaporation'] < 71]
-
-# %%
-train['Evaporation_range'].value_counts()
 
 # %%
 # Crea los bins para Evaporation
