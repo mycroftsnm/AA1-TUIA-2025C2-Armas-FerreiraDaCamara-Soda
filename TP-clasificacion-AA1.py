@@ -295,7 +295,7 @@ fig.show()
 # Observamos que tenemos datos de muchas ubicaciones distintas, implicando que tendremos que generar una gran cantidad de variables dummys lo que corre riesgo de overfitting. Vamos a reducir la dimensionalidad agrupando ubicaciones según sus tipos de clima, siguiendo la clasificación de Koppen. 
 
 # %%
-# Genera una nueva variable Climate basada en la clásificación de Koppen, utilizando la variable Location
+# Genera una nueva variable Climate basada en la clasificación de Koppen, utilizando la variable Location
 
 location_koppen = {
     'Adelaide': 'Temperate',
@@ -554,3 +554,250 @@ ax2.set_ylim(0, 1)
 
 plt.tight_layout()
 plt.show()
+
+
+
+
+
+
+# %%
+#importaciones que ya se hicieron antes pero para no errarle las ponemos de nuevo (luego llevar a la parte superior)
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (accuracy_score, confusion_matrix, classification_report,
+                             roc_curve, roc_auc_score, precision_recall_curve, f1_score)
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+
+
+# %% [markdown]
+# # Paso 1: Finalización del Preprocesamiento y Feature Engineering
+
+# %%
+# Se eliminan columnas que no se usarán para el modelo
+# Date: Por ahora porque falta procesarla
+# Location: Ya la hemos generalizado con la variable Climate
+# Las variables _range que se crearon para el EDA.
+train = train.drop(columns=['Date', 'Location', 'Rainfall_range', 'Evaporation_range'])
+test = test.drop(columns=['Date', 'Location']) 
+
+# %%
+# Separar variables predictoras (X) y objetivo (y)
+X_train = train.drop('RainTomorrow', axis=1)
+y_train = train['RainTomorrow']
+X_test = test.drop('RainTomorrow', axis=1)
+y_test = test['RainTomorrow']
+
+
+# %% [markdown]
+# ### 1.1 Función Auxiliar para Imputación de Valores Nulos y poder ver que la regresión logística funcione
+# Completa con la mediana para numéricas y la moda para categóricas 
+
+# %%
+def imputar_valores_nulos(df_train, df_test):
+    """
+    Función auxiliar para imputar valores nulos usando la mediana para columnas
+    numéricas y la moda para las categóricas.
+    Ajusta los imputadores con los datos de entrenamiento y transforma ambos sets.
+    """
+    print("Iniciando imputación de valores nulos...")
+    
+    # Identificar tipos de columnas desde el dataframe de entrenamiento
+    numerical_cols = df_train.select_dtypes(include=np.number).columns
+    categorical_cols = df_train.select_dtypes(include=['object']).columns
+
+    # Crear copias para evitar advertencias de pandas
+    train_copy = df_train.copy()
+    test_copy = df_test.copy()
+
+    # Imputar variables numéricas
+    imputer_numerical = SimpleImputer(strategy='median')
+    train_copy[numerical_cols] = imputer_numerical.fit_transform(train_copy[numerical_cols])
+    test_copy[numerical_cols] = imputer_numerical.transform(test_copy[numerical_cols])
+    print(f"Se imputaron {len(numerical_cols)} columnas numéricas.")
+
+    # Imputar variables categóricas
+    imputer_categorical = SimpleImputer(strategy='most_frequent')
+    train_copy[categorical_cols] = imputer_categorical.fit_transform(train_copy[categorical_cols])
+    test_copy[categorical_cols] = imputer_categorical.transform(test_copy[categorical_cols])
+    print(f"Se imputaron {len(categorical_cols)} columnas categóricas.")
+
+    # Verificación final
+    print("NaNs restantes en train set después de imputar:", train_copy.isnull().sum().sum())
+    print("NaNs restantes en test set después de imputar:", test_copy.isnull().sum().sum())
+    
+    return train_copy, test_copy
+
+# Aplicar la función de imputación
+X_train, X_test = imputar_valores_nulos(X_train, X_test)
+
+
+# %% [markdown]
+# ### 1.2 Codificación de Variables Categóricas (Dummies). AUXILIAR TAMBIÉN
+
+# %%
+# Identificar columnas categóricas después de la imputación
+categorical_cols = X_train.select_dtypes(include=['object']).columns
+
+# Aplicar One-Hot Encoding
+X_train = pd.get_dummies(X_train, columns=categorical_cols, drop_first=True)
+X_test = pd.get_dummies(X_test, columns=categorical_cols, drop_first=True)
+
+# Alinear las columnas para que test tenga las mismas que train
+train_cols = X_train.columns
+test_cols = X_test.columns
+
+missing_in_test = set(train_cols) - set(test_cols)
+for c in missing_in_test:
+    X_test[c] = 0
+
+missing_in_train = set(test_cols) - set(train_cols)
+for c in missing_in_train:
+    X_train[c] = 0
+
+X_test = X_test[train_cols] # Asegurar el mismo orden de columnas
+
+# %% [markdown]
+# ### 1.3 Escalado de Variables Numéricas
+
+# %%
+scaler = StandardScaler()
+
+# Se escala todo el dataframe ya que las dummies (0 y 1) no se ven afectadas
+# por el escalado estándar de forma que perjudique al modelo.
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Convertir de nuevo a DataFrame para mantener los nombres de las columnas
+X_train = pd.DataFrame(X_train_scaled, columns=X_train.columns)
+X_test = pd.DataFrame(X_test_scaled, columns=X_test.columns)
+
+# %% [markdown]
+# # Paso 2: Construcción del Modelo de Regresión Logística
+
+# %%
+# Instanciar y entrenar el modelo
+log_reg = LogisticRegression(random_state=42, max_iter=1000)#, solver='liblinear') #solver liblinear (descenso por coordenadas), ideal para datasets pequeños o binarios, compatible con regularización L1/L2 
+log_reg.fit(X_train, y_train)
+
+# %% [markdown]
+# # Paso 3: Evaluación Inicial (Umbral por defecto 0.5)
+
+# %%
+# Realizar predicciones
+y_pred_class = log_reg.predict(X_test)
+y_pred_proba = log_reg.predict_proba(X_test)[:, 1] # Probabilidad de pertenencia a la clase positiva (`Mañana Llueve`)
+
+# %% [markdown]
+# ### 3.1 Métricas de Evaluación Clave
+
+# %%
+print("Accuracy:", accuracy_score(y_test, y_pred_class))
+print("\nAUC-ROC:", roc_auc_score(y_test, y_pred_proba))
+print("\nReporte de Clasificación:\n", classification_report(y_test, y_pred_class))
+
+# %% [markdown]
+# ### 3.2 Matriz de Confusión y Curva ROC
+
+# %%
+# Matriz de Confusión
+cm = confusion_matrix(y_test, y_pred_class)
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['No llueve', 'Llueve'],
+            yticklabels=['No llueve', 'Llueve'])
+plt.ylabel('Valor Real')
+plt.xlabel('Predicción')
+plt.title('Matriz de Confusión (Umbral 0.5)')
+plt.show()
+
+# Curva ROC
+fpr, tpr, thresholds_roc = roc_curve(y_test, y_pred_proba)
+plt.figure(figsize=(8, 6))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'AUC = {roc_auc_score(y_test, y_pred_proba):.2f}')
+plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+plt.xlabel('Tasa de Falsos Positivos (FPR)')
+plt.ylabel('Tasa de Verdaderos Positivos (TPR)')
+plt.title('Curva ROC')
+plt.legend(loc="lower right")
+plt.show()
+
+# %% [markdown]
+# # Paso 4: Búsqueda y Ajuste del Umbral (Threshold Tuning)
+
+# %%
+# Calcular precision, recall para diferentes umbrales
+precision, recall, thresholds_pr = precision_recall_curve(y_test, y_pred_proba)
+
+# Convertir a F1-score
+# Se ignora el último valor de precision y recall para alinear con thresholds
+f1_scores = 2 * recall[:-1] * precision[:-1] / (recall[:-1] + precision[:-1])
+
+# Encontrar el mejor umbral
+best_threshold_f1 = thresholds_pr[np.argmax(f1_scores)]
+print(f"Mejor umbral para maximizar F1-Score: {best_threshold_f1:.4f}")
+
+# %% [markdown]
+# ### 4.1 Visualización del Trade-off
+
+# %%
+plt.figure(figsize=(10, 7))
+plt.plot(thresholds_pr, precision[:-1], "b--", label="Precision")
+plt.plot(thresholds_pr, recall[:-1], "g-", label="Recall")
+plt.plot(thresholds_pr, f1_scores, "r-", label="F1-Score", alpha=0.6)
+plt.axvline(x=best_threshold_f1, color='purple', linestyle='--', label=f'Mejor Umbral (F1-Score) = {best_threshold_f1:.2f}')
+plt.xlabel("Umbral")
+plt.title("Precision, Recall y F1-Score vs. Umbral de Decisión")
+plt.legend(loc="best")
+plt.grid(True)
+plt.show()
+
+# %% [markdown]
+# # Paso 5: Interpretación de Coeficientes
+
+# %%
+# Crear un DataFrame con los coeficientes
+coefficients = pd.DataFrame({
+    'Feature': X_train.columns,
+    'Coefficient': log_reg.coef_[0]
+})
+
+# Calcular Odds Ratios
+coefficients['Odds_Ratio'] = np.exp(coefficients['Coefficient'])
+
+# Ordenar por el valor absoluto del coeficiente para ver la importancia
+coefficients['Abs_Coefficient'] = np.abs(coefficients['Coefficient'])
+coefficients = coefficients.sort_values(by='Abs_Coefficient', ascending=False)
+
+# Mostrar los 15 más influyentes
+print("Top 15 features más influyentes:")
+print(coefficients.head(15).drop('Abs_Coefficient', axis=1))
+
+# %% [markdown]
+# # Paso 6: Evaluación Final sobre el Conjunto de Test (con umbral óptimo)
+
+# %%
+# Aplicar el umbral óptimo a las probabilidades
+y_pred_final = (y_pred_proba >= best_threshold_f1).astype(int)
+
+print(f"Métricas con el umbral óptimo de {best_threshold_f1:.4f}\n")
+print("Accuracy:", accuracy_score(y_test, y_pred_final))
+print("\nReporte de Clasificación:\n", classification_report(y_test, y_pred_final))
+
+# %%
+# Matriz de Confusión Final
+cm_final = confusion_matrix(y_test, y_pred_final)
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm_final, annot=True, fmt='d', cmap='Greens',
+            xticklabels=['No llueve', 'Llueve'],
+            yticklabels=['No llueve', 'Llueve'])
+plt.ylabel('Valor Real')
+plt.xlabel('Predicción')
+plt.title(f'Matriz de Confusión (Umbral {best_threshold_f1:.2f})')
+plt.show()
+
+
