@@ -557,11 +557,68 @@ plt.show()
 
 
 
+# %% [markdown]
+# # Paso 7: Análisis de la Influencia de la Dirección del Viento
+
+# %% [markdown]
+# ### 7.1 Análisis Gráfico de `WindGustDir`
+
+# %%
+# Usaremos el dataframe original 'train' antes del preprocesamiento para facilitar la visualización.
+# Asegurémonos de que la columna RainTomorrow (tipo Int8) se trate como categórica para el gráfico.
+train_eda = train.copy()
+train_eda['RainTomorrow'] = train_eda['RainTomorrow'].astype('category')
+
+# Calcular la proporción de lluvia para cada dirección del viento
+wind_rain_proportion = train_eda.groupby('WindGustDir')['RainTomorrow'].value_counts(normalize=True).unstack()
+
+# Ordenar por la proporción de lluvia (1.0)
+wind_rain_proportion = wind_rain_proportion.sort_values(by=1.0, ascending=False)
+
+# Graficar
+plt.figure(figsize=(14, 8))
+sns.barplot(x=wind_rain_proportion.index, y=wind_rain_proportion[1.0], palette='viridis', order=wind_rain_proportion.index)
+plt.title('Proporción de Días con Lluvia al Día Siguiente por Dirección de Ráfaga de Viento', fontsize=16)
+plt.ylabel('Proporción de Lluvia (RainTomorrow = 1)', fontsize=12)
+plt.xlabel('Dirección de la Ráfaga de Viento (WindGustDir)', fontsize=12)
+plt.xticks(rotation=45)
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.show()
+
+# %% [markdown]
+# **Interpretación del Gráfico:**
+# Si en el gráfico observas que ciertas direcciones (por ejemplo, las del norte o noroeste) tienen barras consistentemente más altas que otras (como las del sur), eso es una evidencia visual clara de que la dirección del viento está asociada con una mayor probabilidad de lluvia al día siguiente.
+
+# %% [markdown]
+# ### 7.2 Análisis Estadístico (Prueba Chi-Cuadrado)
+
+# %%
+from scipy.stats import chi2_contingency
+
+# Crear una tabla de contingencia
+contingency_table = pd.crosstab(train['WindGustDir'], train['RainTomorrow'])
+
+# Realizar la prueba de Chi-Cuadrado
+chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+
+print("--- Prueba de Chi-Cuadrado para WindGustDir y RainTomorrow ---")
+print(f"Estadístico Chi2: {chi2:.4f}")
+print(f"P-valor: {p_value}")
+
+# Interpretación del p-valor
+alpha = 0.05
+if p_value < alpha:
+    print("\nConclusión: El p-valor es menor que 0.05. Se rechaza la hipótesis nula.")
+    print("Existe una asociación estadísticamente significativa entre la dirección del viento y si lloverá mañana.")
+else:
+    print("\nConclusión: El p-valor es mayor que 0.05. No se puede rechazar la hipótesis nula.")
+    print("No hay evidencia de una asociación estadísticamente significativa entre la dirección del viento y si lloverá mañana.")
+
 
 
 
 # %%
-#importaciones que ya se hicieron antes pero para no errarle las ponemos de nuevo (luego llevar a la parte superior)
+#importaciones que ya se hicieron antes (luego llevar e integrar a la parte superior)
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -683,7 +740,8 @@ X_test = pd.DataFrame(X_test_scaled, columns=X_test.columns)
 # Instanciar y entrenar el modelo
 log_reg = LogisticRegression(random_state=42, max_iter=1000)#, solver='liblinear') #solver liblinear (descenso por coordenadas), ideal para datasets pequeños o binarios, compatible con regularización L1/L2 
 log_reg.fit(X_train, y_train)
-
+# posteriormente probar balanceo con modelo = LogisticRegression(class_weight='balanced')
+# balancea asisgnando pesos distintos a la función de costo, no modifica la cantidad de datos en cada clase
 # %% [markdown]
 # # Paso 3: Evaluación Inicial (Umbral por defecto 0.5)
 
@@ -718,7 +776,7 @@ plt.show()
 # Curva ROC
 fpr, tpr, thresholds_roc = roc_curve(y_test, y_pred_proba)
 plt.figure(figsize=(8, 6))
-plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'AUC = {roc_auc_score(y_test, y_pred_proba):.2f}')
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'Curva ROC (AUC = {roc_auc_score(y_test, y_pred_proba):.2f})')
 plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
 plt.xlabel('Tasa de Falsos Positivos (FPR)')
 plt.ylabel('Tasa de Verdaderos Positivos (TPR)')
