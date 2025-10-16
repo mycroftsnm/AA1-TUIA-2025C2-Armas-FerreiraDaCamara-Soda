@@ -23,6 +23,12 @@ import plotly.express as px
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+
+from sklearn.linear_model import LogisticRegression
+
+from sklearn.metrics import (accuracy_score, confusion_matrix, classification_report,
+                             roc_curve, roc_auc_score, precision_recall_curve, f1_score)
 
 # %%
 # Carga el dataset en un dataframe
@@ -558,10 +564,10 @@ plt.show()
 
 
 # %% [markdown]
-# # Paso 7: Análisis de la Influencia de la Dirección del Viento
+# # Análisis de la Influencia de la Dirección del Viento
 
 # %% [markdown]
-# ### 7.1 Análisis Gráfico de `WindGustDir`
+# ###  Análisis Gráfico de `WindGustDir`
 
 # %%
 # Usaremos el dataframe original 'train' antes del preprocesamiento para facilitar la visualización.
@@ -587,10 +593,10 @@ plt.show()
 
 # %% [markdown]
 # **Interpretación del Gráfico:**
-# Si en el gráfico observas que ciertas direcciones (por ejemplo, las del norte o noroeste) tienen barras consistentemente más altas que otras (como las del sur), eso es una evidencia visual clara de que la dirección del viento está asociada con una mayor probabilidad de lluvia al día siguiente.
+# Direcciones norte o noroeste tienen barras ligeramente más altas que otras (este), evidencia que ladirección del viento está asociada con una mayor probabilidad de lluvia al día siguiente.
 
 # %% [markdown]
-# ### 7.2 Análisis Estadístico (Prueba Chi-Cuadrado)
+# ###  Análisis Estadístico (Prueba Chi-Cuadrado)
 
 # %%
 from scipy.stats import chi2_contingency
@@ -617,19 +623,141 @@ else:
 
 
 
+# %% [markdown]
+# Hipótesis: el viento es relevante en decirnos si llueve mañana siempre en cuando esté en consonancia con la ubicación de la costa de la ciudad. Recordemos que la gran mayoría de locaciones que poseemos en el dataset son costeras o muy cercanas a una. Por lo tanto, si la costa está al oeste, un viento oeste podría implicar más posibilidad de lluvia, y viceversa. El reciente análisis nos dice que los vientos del este son menos relacionados con lluvia pero tendemos a creer que esto sucede porque simplemente el presente dataset posee menos locaciones con costas al este.
+#
+# Para obtener la información sobre relevancia de la dirección del viento según costa más cercana, vamos a generar una variable relacionada con las costa.
+
 # %%
-#importaciones que ya se hicieron antes (luego llevar e integrar a la parte superior)
-import pandas as pd
-import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
+direccion_costa = {
+    # --- Costa Este (E) ---
+    'Brisbane': 'E', 'Canberra': 'E', 'CoffsHarbour': 'E', 'GoldCoast': 'E',
+    'MountGinini': 'E', 'Newcastle': 'E', 'NorahHead': 'E', 'NorfolkIsland': 'E',
+    'Penrith': 'E', 'Richmond': 'E', 'Sydney': 'E', 'SydneyAirport': 'E',
+    'Tuggeranong': 'E', 'Williamtown': 'E', 'Wollongong': 'E', 'BadgerysCreek': 'E',
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (accuracy_score, confusion_matrix, classification_report,
-                             roc_curve, roc_auc_score, precision_recall_curve, f1_score)
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
+    # --- Costa Oeste (W) ---
+    'Perth': 'W', 'PerthAirport': 'W', 'PearceRAAF': 'W', 'Witchcliffe': 'W',
 
+    # --- Costa Norte (N) ---
+    'Cairns': 'N', 'Darwin': 'N', 'Katherine': 'N', 'Launceston': 'N', 'Townsville': 'N',
+
+    # --- Costa Sur (S) ---
+    'Adelaide': 'S', 'Albany': 'S', 'Dartmoor': 'S', 'Hobart': 'S', 'Melbourne': 'S',
+    'MountGambier': 'S', 'Nuriootpa': 'S', 'Portland': 'S', 'Sale': 'S',
+    'Walpole': 'S', 'Watsonia': 'S',
+
+    # --- Interior (Inland) ---
+    'Albury': 'Inland', 'AliceSprings': 'Inland', 'Ballarat': 'Inland',
+    'Bendigo': 'Inland', 'Cobar': 'Inland', 'Mildura': 'Inland',
+    'Moree': 'Inland', 'Nhil': 'Inland', 'SalmonGums': 'Inland',
+    'Uluru': 'Inland', 'WaggaWaga': 'Inland', 'Woomera': 'Inland'
+}
+
+# %% [markdown]
+# Convertimos las variables direccionales en componentes de seno y coseno, porque son cíclicas. Con esto obtenemos dos grandes ventajes, primero no generamos 15 variables dummies (1 para cada direccion) y la otra ventaja es que captamos bien la naturaleza cíclica de la dirección del viento.
+
+# %%
+# Mapeo de las 16 direcciones del viento a ángulos en grados
+wind_dir_map = {
+    'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+    'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+    'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
+    'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
+}
+
+wind_cols = ['WindGustDir', 'WindDir9am', 'WindDir3pm']
+
+# Iteramos sobre ambos dataframes (train y test)
+for df in [train, test]:
+    for col in wind_cols:
+        # Mapear dirección a ángulo
+        angles = df[col].map(wind_dir_map)
+        
+        # Convertir a radianes
+        radians = np.deg2rad(angles)
+        
+        # Calcular seno y coseno (los NaNs se propagarán y los manejaremos después)
+        df[f'{col}_sin'] = np.sin(radians)
+        df[f'{col}_cos'] = np.cos(radians)
+        
+print("Variables de seno y coseno creadas.")
+
+
+# %% [markdown]
+# Vamos a generar una variable `IsOnShoreWind` que distinga si el viento viene del mar o de la masa continental.
+# Como tenemos tres variables de dirección del viento, vamos a distinguir cual es más importante. Suponemos que `WindGustDir` y `WindDir3pm` son más relevantes que `WindDir9am`
+
+# %%
+# Comparamos `WindGustDir`, `WindDir9am` y `WindDir3pm` para ver cuál tiene la relación más fuerte con la lluvia cuando se convierte a una variable onshore/offshore. **Este análisis se realiza solo sobre el conjunto de `train` para evitar data leakage.**
+
+def es_viento_marino(row, wind_col_name):
+    coast_dir = row['CoastDirection']
+    wind_dir = row[wind_col_name]
+    
+    if pd.isna(wind_dir) or pd.isna(coast_dir) or coast_dir == 'Inland':
+        return 0
+    if coast_dir in wind_dir:
+        return 1
+    else:
+        return 0
+
+# Crear una copia del df de entrenamiento para este análisis
+train_analysis = train.copy()
+train_analysis['CoastDirection'] = train_analysis['Location'].map(direccion_costa)
+
+# Crear las 3 variables candidatas
+for col in wind_cols:
+    # Imputar NaNs para el análisis (ESTO QUITARLO CUANDO SE HAGA EL IMPUTADO FINAL)
+    moda = train_analysis[col].mode()[0]
+    train_analysis[col] = train_analysis[col].fillna(moda)
+    # Crear la variable onshore/offshore
+    train_analysis[f'IsOnshore_{col}'] = train_analysis.apply(es_viento_marino, axis=1, wind_col_name=col)
+
+# --- Comparación Visual y Estadística ---
+best_wind_var = ''
+max_chi2 = -1
+
+for col in wind_cols:
+    onshore_col = f'IsOnshore_{col}'
+    
+    # Gráfico de Barras
+    plt.figure(figsize=(6, 4))
+    sns.barplot(data=train_analysis, x=onshore_col, y='RainTomorrow', palette='coolwarm')
+    plt.title(f'Probabilidad de Lluvia vs. {onshore_col}')
+    plt.ylabel('Proporción de Lluvia')
+    plt.xticks([0, 1], ['Offshore', 'Onshore'])
+    plt.show()
+    
+    # Prueba Chi-Cuadrado
+    contingency_table = pd.crosstab(train_analysis[onshore_col], train_analysis['RainTomorrow'])
+    chi2, p, dof, expected = chi2_contingency(contingency_table)
+    print(f"--- Análisis para {onshore_col} ---")
+    print(f"Estadístico Chi-Cuadrado: {chi2:.2f}")
+    
+    if chi2 > max_chi2:
+        max_chi2 = chi2
+        best_wind_var = col
+
+print(f"\n--- Conclusión del Análisis ---")
+print(f"La variable de viento con la asociación más fuerte con la lluvia es: '{best_wind_var}'")
+print(f"Usaremos esta variable para crear la característica 'IsOnshoreWind' definitiva.")
+
+# %% [markdown]
+# ### Creación Final de las Nuevas Variables en Train y Test
+# Ahora que hemos elegido la mejor variable de viento, creamos la característica `IsOnshoreWind` en ambos conjuntos de datos.
+#
+
+# %%
+for df in [train, test]:
+    df['CoastDirection'] = df['Location'].map(direccion_costa)
+    df['IsOnshoreWind'] = df.apply(es_viento_marino, axis=1, wind_col_name=best_wind_var)
+
+# Eliminar columnas originales y auxiliares
+train.drop(columns=['CoastDirection'] + wind_cols, inplace=True)
+test.drop(columns=['CoastDirection'] + wind_cols, inplace=True)
+
+print("Variable 'IsOnshoreWind' creada y columnas originales eliminadas.")
 
 # %% [markdown]
 # # Paso 1: Finalización del Preprocesamiento y Feature Engineering
@@ -694,7 +822,7 @@ X_train, X_test = imputar_valores_nulos(X_train, X_test)
 
 
 # %% [markdown]
-# ### 1.2 Codificación de Variables Categóricas (Dummies). AUXILIAR TAMBIÉN
+# ### 1.2 Codificación de Variables Categóricas (Dummies). ==AUXILIAR TAMBIÉN==
 
 # %%
 # Identificar columnas categóricas después de la imputación
@@ -751,7 +879,7 @@ y_pred_class = log_reg.predict(X_test)
 y_pred_proba = log_reg.predict_proba(X_test)[:, 1] # Probabilidad de pertenencia a la clase positiva (`Mañana Llueve`)
 
 # %% [markdown]
-# ### 3.1 Métricas de Evaluación Clave
+# ### 3.1 Métricas
 
 # %%
 print("Accuracy:", accuracy_score(y_test, y_pred_class))
@@ -859,3 +987,6 @@ plt.title(f'Matriz de Confusión (Umbral {best_threshold_f1:.2f})')
 plt.show()
 
 
+
+# %%
+train.columns
