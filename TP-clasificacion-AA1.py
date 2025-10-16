@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: .venv
 #     language: python
 #     name: python3
 # ---
@@ -21,6 +21,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.express as px
 
+from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
@@ -45,18 +46,18 @@ df.info(verbose=True)
 df = df.dropna(subset=['RainTomorrow'])
 
 # %%
-df['RainToday'] = df['RainToday'].map({'Yes': 1, 'No': 0}).astype('Int8')
-df['RainTomorrow'] = df['RainTomorrow'].map({'Yes': 1, 'No': 0}).astype('Int8')
-
-# %%
 df['Cloud3pm'].value_counts(dropna=False)
 
 # %%
 df['Cloud9am'].value_counts(dropna=False)
 
-
 # %% [markdown]
 # Por el rango de valores que asumen las variables **Cloud9am** y **Cloud3pm** asumimos que dichas variables están medidas en octas, que es la unidad de medida empleada para describir la nubosidad observable en un determinado lugar. https://es.wikipedia.org/wiki/Octa
+
+# %%
+df['Cloud9am'] = df['Cloud9am'].replace(9, np.nan)
+df['Cloud3pm'] = df['Cloud3pm'].replace(9, np.nan)
+
 
 # %%
 def generar_csv_coordenadas(df):
@@ -245,6 +246,17 @@ plt.tight_layout()
 plt.show()
 
 # %%
+train[variables_numericas]
+
+# %%
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+sns.heatmap(data=train[variables_numericas].corr(), ax=ax1, annot=True, vmin=-1, vmax=1)
+
+plt.tight_layout()
+plt.show()
+
+# %%
 ayer_segun_hoy = pd.crosstab(train['RainTomorrow'], train['RainToday'], normalize='index')
 hoy_segun_ayer = pd.crosstab(train['RainToday'], train['RainTomorrow'], normalize='index')
 
@@ -278,7 +290,7 @@ test = test[test['Rainfall'] < 188]
 
 # %%
 # Crea los bins para Rainfall
-bins = [float('-inf'), 0, 1, 5, 10, 25, 188]
+bins = [float('-inf'), 0, 1, 5, float('inf')]
 
 intervalos = pd.cut(train['Rainfall'], bins=bins, right=True)
 
@@ -315,7 +327,7 @@ ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia sig
 
 # Segundo eje para la proporción absoluta
 ax2 = ax1.twinx()
-ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Proporción absoluta')
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
 ax2.legend(loc='upper left')
 
 # Oculta el eje y secundario; tiene la misma escala que el principal.
@@ -334,3 +346,277 @@ train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .99
 # %%
 train = train[train['Evaporation'] < 71]
 test = test[test['Evaporation'] < 71]
+
+# %%
+# Crea los bins para TEMP
+bins = [float('-inf'), 2.5, 5, 7.5, float('inf')]
+
+intervalos = pd.cut(train['TEMP'], bins=bins, right=True)
+
+train['TEMP_range'] = intervalos
+# Convierte los intervalos a strings para que Seaborn pueda manejarlos
+train['TEMP_range'] = train['TEMP_range'].astype(str)
+
+# Asegura que los rangos mantengan el orden
+train['TEMP_range'] = pd.Categorical(
+    train['TEMP_range'],
+    categories=[str(interval) for interval in intervalos.cat.categories],
+    ordered=True
+)
+
+frecuencias = train['TEMP_range'].value_counts(normalize=True).sort_index()
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+sns.histplot(
+    data=train,
+    x='TEMP_range',
+    hue='RainTomorrow',
+    palette='muted',
+    multiple='fill',  # Mostrar proporciones dentro de cada bin
+    ax=ax1,
+)
+
+ax1.set_xlabel('Rango de Temperatura')
+ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
+ax1.set_title('Distribución de mm de evaporación registrados y si llovió al día siguiente')
+
+ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
+
+# Segundo eje para la proporción absoluta
+ax2 = ax1.twinx()
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
+ax2.legend(loc='upper left')
+
+# Oculta el eje y secundario; tiene la misma escala que el principal.
+ax2.set_axis_off()
+ax2.set_ylim(0, 1)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+sidney = train[(train['Location'] == 'Sydney') | (train['Location'] == 'SydneyAirport')]
+
+fig, axes = plt.subplots(4, 4, figsize=(20, 18))
+
+for i, var in enumerate(variables_numericas):
+    if var == 'Cloud3pm' or var == 'Cloud9am':
+        sns.countplot(data=sidney, x=var, hue='Location', palette='muted', ax=axes[i // 4, i % 4])
+    else:
+        sns.kdeplot(data=sidney, x=var, hue='Location', palette='muted', ax=axes[i // 4, i % 4], common_norm=False)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+# Crea los bins para Sunshine
+bins = [float('-inf'),1, 3,5,7, 10, float('inf')]
+
+intervalos = pd.cut(train['Sunshine'], bins=bins, right=True)
+
+train['Sunshine_range'] = intervalos
+# Convierte los intervalos a strings para que Seaborn pueda manejarlos
+train['Sunshine_range'] = train['Sunshine_range'].astype(str)
+
+# Asegura que los rangos mantengan el orden
+train['Sunshine_range'] = pd.Categorical(
+    train['Sunshine_range'],
+    categories=[str(interval) for interval in intervalos.cat.categories],
+    ordered=True
+)
+
+frecuencias = train['Sunshine_range'].value_counts(normalize=True).sort_index()
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+sns.histplot(
+    data=train,
+    x='Sunshine_range',
+    hue='RainTomorrow',
+    palette='muted',
+    multiple='fill',  # Mostrar proporciones dentro de cada bin
+    ax=ax1,
+)
+
+ax1.set_xlabel('Rango de Sunshine')
+ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
+ax1.set_title('Distribución de mm de lluvia registrados y si llovió al día siguiente')
+
+ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
+
+# Segundo eje para la proporción absoluta
+ax2 = ax1.twinx()
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
+ax2.legend(loc='upper left')
+
+# Oculta el eje y secundario; tiene la misma escala que el principal.
+ax2.set_axis_off()
+ax2.set_ylim(0, 1)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+train[train.isnull().any(axis=1)]['RainTomorrow'].value_counts()
+
+# %%
+train[train.isnull().any(axis=1)]['Climate'].value_counts()
+
+# %%
+train.columns
+
+# %%
+train[train['Rainfall'].isna()]
+
+# %%
+df[df['RainToday'].isna()]['Rainfall'].isna().all()
+
+# %%
+df['Sunshine'].isna().sum()
+
+# %%
+train[train.isna().sum(axis=1) > 11]
+
+# %%
+train[train.isna().sum(axis=1) > 11]['RainTomorrow'].value_counts(dropna=False)
+
+# %%
+df['Rainfall'].value_counts(dropna=False)
+
+# %% [markdown]
+#
+
+# %%
+temp_df = train[['MinTemp', 'MaxTemp', 'Temp9am', 'Temp3pm']].dropna()
+
+# %%
+pca = PCA(n_components=1).set_output(transform="pandas")
+
+train['TEMP'] = pca.fit_transform(temp_df)
+
+# %%
+pca.explained_variance_ratio_
+
+# %%
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+sns.scatterplot(data=train, x='Pressure9am', y='Pressure3pm', hue='RainTomorrow')
+
+plt.tight_layout()
+plt.show()
+
+# %%
+fig = plt.figure(figsize=(16,9))
+px.scatter_3d(train, x='Temp3pm', y='Humidity3pm', z='Rainfall', color='RainTomorrow', width=1600, height=900)
+
+
+# %%
+# Crea los bins para Cloud
+bins = [float('-inf'),1, 3,5,7, 10, float('inf')]
+
+intervalos = pd.cut(train['Cloud3pm'], bins=bins, right=True)
+
+train['Cloud_range'] = intervalos
+# Convierte los intervalos a strings para que Seaborn pueda manejarlos
+train['Cloud_range'] = train['Cloud_range'].astype(str)
+
+# Asegura que los rangos mantengan el orden
+train['Cloud_range'] = pd.Categorical(
+    train['Cloud_range'],
+    categories=[str(interval) for interval in intervalos.cat.categories],
+    ordered=True
+)
+
+frecuencias = train['Cloud_range'].value_counts(normalize=True).sort_index()
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+sns.histplot(
+    data=train,
+    x='Cloud3pm',
+    hue='RainTomorrow',
+    palette='muted',
+    multiple='fill',  # Mostrar proporciones dentro de cada bin
+    ax=ax1,
+)
+
+ax1.set_xlabel('Rango de Cloud')
+ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
+ax1.set_title('Distribución de mm de lluvia registrados y si llovió al día siguiente')
+
+ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
+
+# Segundo eje para la proporción absoluta
+ax2 = ax1.twinx()
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
+ax2.legend(loc='upper left')
+
+# Oculta el eje y secundario; tiene la misma escala que el principal.
+ax2.set_axis_off()
+ax2.set_ylim(0, 1)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+proporciones_lluvia = train.dropna().groupby(['Cloud9am', 'Cloud3pm'])['RainTomorrow'].mean().reset_index()
+
+# %%
+proporciones_lluvia['RainTomorrow'] = proporciones_lluvia['RainTomorrow'].astype(np.float64)
+
+# %%
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+#sns.scatterplot(data=proporciones_lluvia, x='Cloud9am', y='Cloud3pm', hue='RainTomorrow')
+sns.heatmap(
+    data=proporciones_lluvia.pivot(index='Cloud9am', columns=('Cloud3pm'), values='RainTomorrow'),
+    annot=True,
+    fmt=".2f",
+
+)
+
+plt.tight_layout()
+plt.show()
+
+
+# %%
+def graficar_prob_lluvia_segun(df, var):
+    print(var)
+    ax = plt.figure(figsize=(16, 6))
+    sns.histplot(
+        data=df,
+        x=var,
+        hue='RainTomorrow',
+        palette='muted',
+        multiple='fill',  # Mostrar proporciones dentro de cada bin
+    )
+
+    
+
+    plt.tight_layout()
+    plt.show()
+
+# %%
+graficar_prob_lluvia_segun(train, 'Temp9am')
+
+# %%
+train['RainTomorrow'].describe()
+
+# %%
+ax = plt.figure(figsize=(16, 9))
+sns.boxplot(
+    data=train,
+    y='Temp3pm',
+    x='RainTomorrow',
+    hue='RainTomorrow',
+    palette='muted',
+)
+
+
+
+plt.tight_layout()
+plt.show()
