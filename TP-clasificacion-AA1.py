@@ -564,18 +564,78 @@ plt.show()
 
 
 # %% [markdown]
+# Análisis y tratamiento de Date
+
+# %%
+train.sample(3)
+
+# %%
+train['Date'] = pd.to_datetime(train['Date'])
+train['Month'] = train['Date'].dt.month
+climate_monthly_rain = train.groupby(['Climate', 'Month'])['RainTomorrow'].mean().reset_index()
+
+
+# Usamos catplot para crear fácilmente subplots para cada categoría de 'Climate'
+g = sns.catplot(
+    data=climate_monthly_rain,
+    x='Month',
+    y='RainTomorrow',
+    col='Climate',  # Crea una columna de gráficos para cada valor de 'Climate'
+    kind='bar',     # Especifica que queremos un gráfico de barras
+    palette='viridis',
+    height=5,       # Altura de cada gráfico
+    aspect=1.5      # Relación ancho/alto
+)
+
+# --- Paso 4: Mejorar la legibilidad del gráfico ---
+# Títulos y etiquetas
+g.fig.suptitle('Probabilidad de Lluvia Mensual por Zona Climática', y=1.03, fontsize=16)
+g.set_axis_labels('Mes del Año', 'Probabilidad de Lluvia')
+g.set_titles("Zona: {col_name}")
+
+# Cambiar las etiquetas del eje X a nombres de meses
+month_labels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+g.set_xticklabels(month_labels)
+
+plt.show()
+
+# %% [markdown]
+# Para capturar la naturaleza cíclica de la variable, y observando que no existen distribuciones bimodales, transformamos la variable `Date` a seno y coseno.
+
+# %%
+# nos aseguramos de que date sea datetime (es posible que ya lo hayamos hecho antes, sacar si es así) REVISAR
+train['Date'] = pd.to_datetime(train['Date'])
+test['Date'] = pd.to_datetime(test['Date'])
+
+# Basamos la transformación en el día del año
+train['DayOfYear'] = train['Date'].dt.dayofyear
+test['DayOfYear'] = test['Date'].dt.dayofyear
+
+#Convertir a radianes y calcular seno/coseno
+day_of_year_radians_train = (train['DayOfYear'] / 365.25) * 2 * np.pi
+train['DayOfYear_sin'] = np.sin(day_of_year_radians_train)
+train['DayOfYear_cos'] = np.cos(day_of_year_radians_train)
+day_of_year_radians_test = (test['DayOfYear'] / 365.25) * 2 * np.pi
+test['DayOfYear_sin'] = np.sin(day_of_year_radians_test)
+test['DayOfYear_cos'] = np.cos(day_of_year_radians_test)
+
+print("Resultado de la transformación en el DataFrame de entrenamiento:")
+print(train[['Date', 'DayOfYear', 'DayOfYear_sin', 'DayOfYear_cos']].head())
+print("\nResultado de la transformación en el DataFrame de prueba:")
+print(test[['Date', 'DayOfYear', 'DayOfYear_sin', 'DayOfYear_cos']].head())
+
+
+# %% [markdown]
 # # Análisis de la Influencia de la Dirección del Viento
 
 # %% [markdown]
 # ###  Análisis Gráfico de `WindGustDir`
 
 # %%
-# Usaremos el dataframe original 'train' antes del preprocesamiento para facilitar la visualización.
-# Asegurémonos de que la columna RainTomorrow (tipo Int8) se trate como categórica para el gráfico.
 train_eda = train.copy()
 train_eda['RainTomorrow'] = train_eda['RainTomorrow'].astype('category')
 
-# Calcular la proporción de lluvia para cada dirección del viento
+# proporción de lluvia para cada dirección del viento
 wind_rain_proportion = train_eda.groupby('WindGustDir')['RainTomorrow'].value_counts(normalize=True).unstack()
 
 # Ordenar por la proporción de lluvia (1.0)
@@ -689,7 +749,7 @@ print("Variables de seno y coseno creadas.")
 # Como tenemos tres variables de dirección del viento, vamos a distinguir cual es más importante. Suponemos que `WindGustDir` y `WindDir3pm` son más relevantes que `WindDir9am`
 
 # %%
-# Comparamos `WindGustDir`, `WindDir9am` y `WindDir3pm` para ver cuál tiene la relación más fuerte con la lluvia cuando se convierte a una variable onshore/offshore. **Este análisis se realiza solo sobre el conjunto de `train` para evitar data leakage.**
+# Comparamos WindGustDir, WindDir9am y WindDir3pm para ver cuál tiene la relación más fuerte con la lluvia cuando se convierte a una variable onshore/offshore. para evitar data leakageeste análisis se realiza solo sobre el conjunto de train.
 
 def es_viento_marino(row, wind_col_name):
     coast_dir = row['CoastDirection']
