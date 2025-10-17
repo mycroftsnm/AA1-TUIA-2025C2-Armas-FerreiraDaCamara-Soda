@@ -36,12 +36,17 @@ df = pd.read_csv('weatherAUS.csv')
 
 # Revisa si hay filas duplicadas
 df.duplicated().sum() # 0 filas duplicadas
-
-pd.set_option('display.max_columns', None)
 df.describe(include='all')
 
 # %%
-df.describe()
+df["RainTomorrow"].value_counts(normalize=True).round(2)
+
+# %% [markdown]
+# El dataset está desbalanceado. 78% clase 0 u 22% clase 1.
+
+# %%
+df['RainToday'] = df['RainToday'].map({'Yes': 1, 'No': 0}).astype('Int8')
+df['RainTomorrow'] = df['RainTomorrow'].map({'Yes': 1, 'No': 0}).astype('Int8')
 
 # %%
 print(f"El dataframe posee {len(df.columns)} variables:\n" + "\n".join(f"  - {col}" for col in df.columns))
@@ -108,6 +113,10 @@ distribucion_nan
 # %% [markdown]
 # Existen 56420 observaciones sin faltantes, lo que representa un 38.8% del dataset. El resto posee al menos un dato faltante.
 
+
+# %%
+# Drop de filas con NaN en la feature objetivo. Justificación: preferimos evitar imputar la variable objetivo y correr el riesgo de introducir ruido en el dataset, porque la cantidad de datos que perdemos es relativamente baja (menos del 2.25% del dataset).
+df = df.dropna(subset=['RainTomorrow'])
 # %%
 df.info(verbose=True)
 
@@ -118,19 +127,7 @@ df.info(verbose=True)
 # distribución de Sunshine según RainTomorrow
 df.groupby('RainTomorrow')['Sunshine'].describe(percentiles=[0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999])
 
-# %%
-df["RainTomorrow"].value_counts(normalize=True).round(2)
 
-# %% [markdown]
-# El dataset está desbalanceado. 78% clase 0 u 22% clase 1.
-
-# %%
-# Drop de filas con NaN en la feature objetivo
-df = df.dropna(subset=['RainTomorrow'])
-
-# %%
-df['RainToday'] = df['RainToday'].map({'Yes': 1, 'No': 0}).astype('Int8')
-df['RainTomorrow'] = df['RainTomorrow'].map({'Yes': 1, 'No': 0}).astype('Int8')
 
 # %% [markdown]
 # Análisis de las variables "Cloud"
