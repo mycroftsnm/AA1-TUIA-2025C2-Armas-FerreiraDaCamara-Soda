@@ -46,6 +46,10 @@ df.info(verbose=True)
 df = df.dropna(subset=['RainTomorrow'])
 
 # %%
+# Drop de filas con mas de la mitad de features con valor nulo
+df = df[df.isna().sum(axis=1) <= 11]
+
+# %%
 df['Cloud3pm'].value_counts(dropna=False)
 
 # %%
@@ -238,15 +242,97 @@ fig, axes = plt.subplots(4, 4, figsize=(20, 18))
 
 for i, var in enumerate(variables_numericas):
     if var == 'Cloud3pm' or var == 'Cloud9am':
+        sns.countplot(data=train, x=var, ax=axes[i // 4, i % 4])
+    else:
+        sns.kdeplot(data=train, x=var, ax=axes[i // 4, i % 4])
+
+fig.suptitle('Distribución de variables numéricas', fontsize=18)
+
+plt.tight_layout()
+fig.subplots_adjust(top=0.96) # Espacio vertical para el título
+plt.show()
+
+# %% [markdown]
+# #### Observaciones iniciales
+#
+# * Agunas gráficas están fuertemente sesgadas a la derecha, sobretodo ***Rainfall*** y ***Evaporation***.
+# * En general las distribuciones muestran signos de multimodalidad, posiblemente debido a datos de distintas estaciones del año o distintos climas.
+#
+# Vamos a verificar si nuestra clasificación en climas de Koppen explica parte de la multimodalidad.
+
+# %%
+fig, axes = plt.subplots(4, 4, figsize=(20, 18))
+
+for i, var in enumerate(variables_numericas):
+    if var == 'Cloud3pm' or var == 'Cloud9am':
         sns.countplot(data=train, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'])
     else:
         sns.kdeplot(data=train, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'], common_norm=False)
 
+fig.suptitle('Distribución de variables numéricas según tipo de clima', fontsize=18)
+
 plt.tight_layout()
+fig.subplots_adjust(top=0.96) # Espacio vertical para el título
 plt.show()
 
+# %% [markdown]
+# Comprobamos que efectivamente la clasificación de climas según koppen ayudo a disminuir la multimodalidad. #TODO redactar bien
+
+# %% [markdown]
+# ## Tratado de Outliers
+
+# %% [markdown]
+# #### Variable *Rainfall*
+
 # %%
-train[variables_numericas]
+train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
+
+# %% [markdown]
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación. Además aplicamos transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
+
+# %%
+train['Rainfall'] = np.where(train['Rainfall'] > 101, np.nan, train['Rainfall'])
+train['Rainfall_log'] = np.log1p(train['Rainfall'])
+
+test['Rainfall'] = np.where(test['Rainfall'] > 101, np.nan, test['Rainfall'])
+test['Rainfall_log'] = np.log1p(test['Rainfall'])
+
+# %% [markdown]
+# #### Variable *Evaporation*
+
+# %%
+train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+
+# %% [markdown]
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación #TODO justificar especifico
+
+# %%
+train['Evaporation'] = np.where(train['Evaporation'] > 70, np.nan, train['Evaporation'])
+test['Evaporation'] = np.where(test['Evaporation'] > 70, np.nan, test['Evaporation'])
+
+# %% [markdown]
+# #### Variable *WindSpeed9am*
+
+# %%
+train['WindSpeed9am'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+
+# %% [markdown]
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación #TODO justificar especifico
+
+# %%
+train['WindSpeed9am'] = np.where(train['WindSpeed9am'] > 67, np.nan, train['WindSpeed9am'])
+
+# %% [markdown]
+# #### Variable *WindSpeed3pm*
+
+# %%
+train['WindSpeed3pm'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+
+# %% [markdown]
+# #### Variable *WindGustSpeed*
+
+# %%
+train['WindGustSpeed'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
 
 # %%
 fig, ax1 = plt.subplots(figsize=(16, 9))
@@ -336,16 +422,6 @@ ax2.set_ylim(0, 1)
 
 plt.tight_layout()
 plt.show()
-
-# %% [markdown]
-# ### Variable **Evaporation**
-
-# %%
-train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.9, 0.95, 0.99, .999, .9999])
-
-# %%
-train = train[train['Evaporation'] < 71]
-test = test[test['Evaporation'] < 71]
 
 # %%
 # Crea los bins para TEMP
