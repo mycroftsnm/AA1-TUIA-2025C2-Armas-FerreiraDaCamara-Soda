@@ -282,26 +282,29 @@ plt.show()
 # ## Tratado de Outliers
 
 # %% [markdown]
+# Vamos a analizar las variables cuyas distribuciones están muy sesgadas: *Rainfall*, *Evaporation* y las variables que miden velocidades del viento *WindSpeed9am*, *WindSpeed3pm* y *WindGustSpeed*. 
+
+# %% [markdown]
 # #### Variable *Rainfall*
 
 # %%
 train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
 
 # %% [markdown]
-# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación. Además aplicamos transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
+# Eliminamos los valores mayores al 99.99% de los datos ya que se presentan un incremento abrupto para su posterior imputación. Además aplicamos transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
 
 # %%
-train['Rainfall'] = np.where(train['Rainfall'] > 101, np.nan, train['Rainfall'])
+train['Rainfall'] = np.where(train['Rainfall'] > 185, np.nan, train['Rainfall'])
 train['Rainfall_log'] = np.log1p(train['Rainfall'])
 
-test['Rainfall'] = np.where(test['Rainfall'] > 101, np.nan, test['Rainfall'])
+test['Rainfall'] = np.where(test['Rainfall'] > 185, np.nan, test['Rainfall'])
 test['Rainfall_log'] = np.log1p(test['Rainfall'])
 
 # %% [markdown]
 # #### Variable *Evaporation*
 
 # %%
-train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
 
 # %% [markdown]
 # Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación #TODO justificar especifico
@@ -314,7 +317,7 @@ test['Evaporation'] = np.where(test['Evaporation'] > 70, np.nan, test['Evaporati
 # #### Variable *WindSpeed9am*
 
 # %%
-train['WindSpeed9am'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+train['WindSpeed9am'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
 
 # %% [markdown]
 # Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación #TODO justificar especifico
@@ -326,13 +329,32 @@ train['WindSpeed9am'] = np.where(train['WindSpeed9am'] > 67, np.nan, train['Wind
 # #### Variable *WindSpeed3pm*
 
 # %%
-train['WindSpeed3pm'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+train['WindSpeed3pm'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
+
+# %% [markdown]
+# En este caso no vamos a eliminar ningun dato #TODO
 
 # %% [markdown]
 # #### Variable *WindGustSpeed*
 
 # %%
-train['WindGustSpeed'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
+train['WindGustSpeed'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
+
+# %% [markdown]
+# En este caso no vamos a eliminar ningun dato #TODO
+
+# %%
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+sns.histplot(
+    data=train,
+    x='WindGustSpeed',
+    bins=50
+)
+
+plt.tight_layout()
+plt.show()
+
 
 # %%
 fig, ax1 = plt.subplots(figsize=(16, 9))
