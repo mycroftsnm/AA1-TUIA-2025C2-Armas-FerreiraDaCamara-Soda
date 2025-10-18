@@ -30,6 +30,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (accuracy_score, confusion_matrix, classification_report,
                              roc_curve, roc_auc_score, precision_recall_curve, f1_score)
 
+from scipy.stats import chi2_contingency
+
 # %%
 # Carga el dataset en un dataframe
 df = pd.read_csv('weatherAUS.csv')
@@ -45,6 +47,17 @@ df["RainTomorrow"].value_counts(normalize=True).round(2)
 # El dataset está desbalanceado. 78% clase 0 u 22% clase 1.
 
 # %%
+# distribución de 'RainTomorrow'
+plt.figure(figsize=(8, 6))
+sns.countplot(x='RainTomorrow', stat='proportion', data=df, )
+plt.title('Distribución de RainTomorrow', fontsize=16)
+plt.xlabel('¿Lloverá Mañana?')
+plt.ylabel('Proporción')
+plt.tight_layout()
+plt.grid()
+plt.show()
+
+# %%
 df['RainToday'] = df['RainToday'].map({'Yes': 1, 'No': 0}).astype('Int8')
 df['RainTomorrow'] = df['RainTomorrow'].map({'Yes': 1, 'No': 0}).astype('Int8')
 
@@ -56,13 +69,6 @@ print(f"El dataframe posee {len(df.columns)} variables:\n" + "\n".join(f"  - {co
 
 # %% [markdown]
 # Análsis de faltantes:
-
-# %%
-faltantes_df = pd.DataFrame({
-    'NaN': df.isna().sum(),
-    '%': (df.isna().sum() / len(df) * 100).round(2)
-}).sort_values('NaN', ascending=False)
-faltantes_df
 
 # %%
 faltantes_df = pd.DataFrame({
@@ -220,6 +226,10 @@ df = df_imputed
 # df_final = df.groupby(['Date', 'Location']).agg(agg_functions).reset_index()
 
 # print(f"Dimensiones finales del DataFrame: {df_final.shape}")
+
+# %%
+df['Location'].unique().tolist()
+
 
 # %%
 def generar_csv_coordenadas(df):
@@ -381,11 +391,432 @@ fig.update_layout(width=1600,height=900)
 fig.show()
 
 # %% [markdown]
+# # Imputación de valores faltantes
+# Vamos a imputar los valores faltantes por cercanía, por fecha y por región. Primero calculamos las distancias entre las locaciones, y a cada una le asignamos un lugar más cercano. 
+# Luego agrupamos por fecha y se iteran entre todas las fechas. Si la locación más cercana es del mismo clima, se obtiene el valor faltante del registro hecho en el mismo día.
+# De no poderse imputar algunos valores (porque la locación cercana no es del mismo clima o porque ambas tienen faltantes en el mismo día y variable) se imputan con la mediana en los valores numéricos y con la moda en los valores categóricos.
+
+# %%
+from scipy.spatial.distance import cdist
+
+def imputar_por_proximidad(df, coords_path='australian_locations.csv', location_koppen=None):
+    """
+    Imputa valores faltantes usando dos fases:
+    IMPUTACIÓN 1: Por ubicación más cercana del mismo clima y mismo día
+    IMPUTACIÓN 2: Por mediana (numéricas) o moda (categóricas) para los restantes
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        Dataset con datos meteorológicos
+    coords_path : str
+        Ruta al archivo CSV con coordenadas (columns: location, lat, lon)
+    location_koppen : dict
+        Diccionario con clasificación climática por ubicación
+        
+    Returns:
+    --------
+    DataFrame con valores imputados y reporte de imputación
+    """
+    
+    # Cargar coordenadas
+    coords = pd.read_csv(coords_path)
+    
+    # Añadir Climate al dataframe de coordenadas 
+    if location_koppen:
+        coords['Climate'] = coords['location'].map(location_koppen)
+    
+    # Calcular matriz de distancias UNA SOLA VEZ
+    locations = coords['location'].values
+    coords_array = coords[['lat', 'lon']].values
+    dist_matrix = cdist(coords_array, coords_array, metric='euclidean')
+    
+    # Para cada ubicación, encontrar las más cercanas del mismo clima
+    nearest_by_climate = {}
+    
+    for i, loc in enumerate(locations):
+        climate = coords.iloc[i]['Climate']
+        # Filtrar ubicaciones del mismo clima
+        same_climate_mask = coords['Climate'] == climate
+        same_climate_indices = coords[same_climate_mask].index.tolist()
+        
+        # Obtener distancias a ubicaciones del mismo clima (excluyendo la misma)
+        distances = [(idx, dist_matrix[i, idx]) for idx in same_climate_indices if idx != i]
+        # Ordenar por distancia
+        distances.sort(key=lambda x: x[1])
+        
+        # Guardar lista de ubicaciones ordenadas por proximidad
+        nearest_by_climate[loc] = [locations[idx] for idx, _ in distances]
+    
+    print(f"  → Matriz de distancias calculada para {len(locations)} ubicaciones")
+    
+    # Añadir Climate al dataframe si no existe
+    df_imputed = df.copy()
+    if 'Climate' not in df_imputed.columns and location_koppen:
+        df_imputed['Climate'] = df_imputed['Location'].map(location_koppen)
+    
+    # Identificar columnas a imputar
+    numeric_cols = df_imputed.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_cols = [col for col in numeric_cols if col not in ['lat', 'lon']]
+    
+    categorical_cols = ['WindGustDir', 'WindDir9am', 'WindDir3pm']
+    binary_cols = ['RainToday'] # PENSAR SI IMPUTAMOS RainTomorrow !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    all_cols_to_impute = numeric_cols + categorical_cols + binary_cols
+    
+    # Reporte de imputación
+    reporte = {col: {'imputacion1': 0, 'imputacion2': 0, 'total_nulos': df_imputed[col].isna().sum()} 
+               for col in all_cols_to_impute if col in df_imputed.columns}
+    
+    print("\nIMPUTACIÓN 1: por proximidad geográfica")
+    
+    # Agrupar por Date
+    grouped = df_imputed.groupby('Date')
+    
+    # IMPUTACIÓN 1: Imputación por proximidad
+    for col in all_cols_to_impute:
+        if col not in df_imputed.columns:
+            continue
+            
+        total_missing = df_imputed[col].isna().sum()
+        if total_missing == 0:
+            continue
+        
+        print(f"\nProcesando {col}: {total_missing} valores faltantes")
+        imputados_imputacion1 = 0
+        
+        # Procesar por fecha para reducir búsquedas
+        for date, group in grouped:
+            # Identificar filas con valores faltantes en este grupo
+            missing_in_group = group[group[col].isna()]
+            
+            if len(missing_in_group) == 0:
+                continue
+            
+            # Crear un diccionario de valores disponibles por ubicación en esta fecha
+            available_values = group[group[col].notna()].set_index('Location')[col].to_dict()
+            
+            # Imputar cada fila faltante
+            for idx, row in missing_in_group.iterrows():
+                location = row['Location']
+                
+                # Obtener lista de ubicaciones cercanas (ya ordenadas por proximidad)
+                if location not in nearest_by_climate:
+                    continue
+                
+                nearest_locations = nearest_by_climate[location]
+                
+                # Buscar la primera ubicación cercana que tenga el valor disponible
+                for nearest_loc in nearest_locations:
+                    if nearest_loc in available_values:
+                        df_imputed.loc[idx, col] = available_values[nearest_loc]
+                        imputados_imputacion1 += 1
+                        break
+        
+        reporte[col]['imputacion1'] = imputados_imputacion1
+        print(f"  → Imputados en IMPUTACIÓN 1: {imputados_imputacion1} ({imputados_imputacion1/total_missing*100:.1f}%)")
+    
+    print("\nIMPUTACIÓN 2: con mediana/moda")
+    
+    for col in all_cols_to_impute:
+        if col not in df_imputed.columns:
+            continue
+            
+        missing_mask = df_imputed[col].isna()
+        num_missing = missing_mask.sum()
+        
+        if num_missing == 0:
+            continue
+        
+        if col in categorical_cols + binary_cols:
+            # Moda para categóricas
+            moda = df_imputed[col].mode()
+            if len(moda) > 0:
+                df_imputed.loc[missing_mask, col] = moda[0]
+                reporte[col]['imputacion2'] = num_missing
+                print(f"{col}: {num_missing} imputados con moda '{moda[0]}'")
+        else:
+            # Mediana para numéricas
+            mediana = df_imputed[col].median()
+            df_imputed.loc[missing_mask, col] = mediana
+            reporte[col]['imputacion2'] = num_missing
+            print(f"{col}: {num_missing} imputados con mediana {mediana:.2f}")
+    
+    # Crear DataFrame de reporte
+    reporte_df = pd.DataFrame(reporte).T
+    reporte_df['total_imputados'] = reporte_df['imputacion1'] + reporte_df['imputacion2']
+    reporte_df['porcentaje_imputacion1'] = (reporte_df['imputacion1'] / reporte_df['total_nulos'] * 100).round(2)
+    reporte_df['porcentaje_imputacion2'] = (reporte_df['imputacion2'] / reporte_df['total_nulos'] * 100).round(2)
+    
+    print("\nREPORTE DE IMPUTACIÓN:")
+    print(reporte_df[reporte_df['total_nulos'] > 0].to_string())
+    
+    return df_imputed, reporte_df
+
+
+
+# %%
+# df_imputado, reporte = imputar_por_proximidad(
+#     df, 
+#     coords_path='australian_locations.csv',
+#     location_koppen=location_koppen
+# )
+
+# # si se quiere guardar el resultado (primera ejecución)
+# df_imputado.to_csv('weather_data_imputed.csv', index=False)
+
+# si ya fue generado anteriormente, descomentar la línea inferior y comentar el resto para simplemente cargar y evitar reprocesamiento
+df_imputado = pd.read_csv('weather_data_imputed.csv') 
+
+# %%
+faltantes_df = pd.DataFrame({
+    'NaN': df_imputado.isna().sum(),
+    '%': (df_imputado.isna().sum() / len(df_imputado) * 100).round(2)
+}).sort_values('NaN', ascending=False)
+faltantes_df
+
+
+# %%
+def validar_imputacion(df_original, df_imputado, columnas=None, figsize=(15, 10)):
+    """
+    Valida que la imputación no haya alterado significativamente las distribuciones.
+    
+    Parameters:
+    -----------
+    df_original : DataFrame
+        Dataset original con valores faltantes
+    df_imputado : DataFrame
+        Dataset después de la imputación
+    columnas : list, optional
+        Lista de columnas a validar. Si None, valida todas las numéricas.
+    figsize : tuple
+        Tamaño de las figuras
+        
+    Returns:
+    --------
+    DataFrame con estadísticas comparativas
+    """
+    
+    # Seleccionar columnas numéricas si no se especifican
+    if columnas is None:
+        columnas = df_original.select_dtypes(include=[np.number]).columns.tolist()
+        columnas = [col for col in columnas if col not in ['lat', 'lon']]
+    
+    # Dataframe para resultados estadísticos
+    resultados = []
+ 
+    print("Comparación de distribuciones antes y después de la imputación:")
+    
+    for col in columnas:
+        if col not in df_original.columns or col not in df_imputado.columns:
+            continue
+        
+        # Datos originales (sin NaN)
+        original_sin_nan = df_original[col].dropna()
+        # Datos imputados completos
+        imputado_completo = df_imputado[col].dropna()
+        # Solo los valores que fueron imputados
+        mask_imputados = df_original[col].isna() & df_imputado[col].notna()
+        valores_imputados = df_imputado.loc[mask_imputados, col]
+        
+        if len(valores_imputados) == 0:
+            continue
+        
+        # Calcular estadísticas
+        stats_dict = {
+            'variable': col,
+            'n_imputados': len(valores_imputados),
+            'pct_imputados': len(valores_imputados) / len(df_imputado) * 100,
+            
+            # Medidas de tendencia central
+            'media_original': original_sin_nan.mean(),
+            'media_imputado': imputado_completo.mean(),
+            'diff_media': imputado_completo.mean() - original_sin_nan.mean(),
+            
+            'mediana_original': original_sin_nan.median(),
+            'mediana_imputado': imputado_completo.median(),
+            'diff_mediana': imputado_completo.median() - original_sin_nan.median(),
+            
+            # Medidas de dispersión
+            'std_original': original_sin_nan.std(),
+            'std_imputado': imputado_completo.std(),
+            'diff_std': imputado_completo.std() - original_sin_nan.std(),
+        }
+        
+        resultados.append(stats_dict)
+    
+    df_resultados = pd.DataFrame(resultados)
+    
+    # Mostrar resumen
+    print("\nRESUMEN ESTADÍSTICO")
+    print(df_resultados[['variable', 'n_imputados', 'pct_imputados', 
+                         'diff_media', 'diff_mediana', 'diff_std']].to_string(index=False))
+    return df_resultados
+
+
+def visualizar_comparacion_distribuciones(df_original, df_imputado, columnas=None, 
+                                         max_cols=None, figsize=(18, 12)):
+    """
+    Visualiza comparación de distribuciones antes y después de imputación usando KDE plots.
+    
+    Parameters:
+    -----------
+    df_original : DataFrame
+        Dataset original con valores faltantes
+    df_imputado : DataFrame
+        Dataset después de la imputación
+    columnas : list, optional
+        Lista de columnas a visualizar. Si None, selecciona todas las numéricas.
+    max_cols : int, optional
+        Número máximo de columnas a visualizar. Si None, visualiza todas.
+    """
+    
+    # Seleccionar columnas si no se especifican
+    if columnas is None:
+        columnas_numericas = df_original.select_dtypes(include=[np.number]).columns.tolist()
+        columnas_numericas = [col for col in columnas_numericas if col not in ['lat', 'lon']]
+        
+        # Ordenar por cantidad de NaN
+        nans_por_col = [(col, df_original[col].isna().sum()) for col in columnas_numericas]
+        nans_por_col.sort(key=lambda x: x[1], reverse=True)
+        
+        if max_cols is not None:
+            columnas = [col for col, _ in nans_por_col[:max_cols]]
+        else:
+            columnas = [col for col, _ in nans_por_col]
+    
+    n_cols = len(columnas)
+    n_rows = (n_cols + 2) // 3
+    
+    # Ajustar figsize si hay muchas variables
+    if n_rows > 4:
+        figsize = (18, n_rows * 3)
+    
+    fig, axes = plt.subplots(n_rows, 3, figsize=figsize)
+    axes = axes.flatten() if n_cols > 1 else [axes]
+    
+    # Variable para guardar handles y labels de la leyenda (solo una vez)
+    legend_handles = None
+    legend_labels = None
+    
+    for idx, col in enumerate(columnas):
+        ax = axes[idx]
+        
+        # Datos
+        original_sin_nan = df_original[col].dropna()
+        imputado_completo = df_imputado[col].dropna()
+        mask_imputados = df_original[col].isna() & df_imputado[col].notna()
+        valores_imputados = df_imputado.loc[mask_imputados, col]
+        
+        # Preparar datos para KDE plots
+        df_plot_original = pd.DataFrame({
+            'valor': original_sin_nan,
+            'tipo': 'Original'
+        })
+        
+        df_plot_completo = pd.DataFrame({
+            'valor': imputado_completo,
+            'tipo': 'Con imputación'
+        })
+        
+        df_plot_imputados = pd.DataFrame({
+            'valor': valores_imputados,
+            'tipo': 'Solo imputados'
+        })
+        
+        # Combinar para el plot
+        df_combined = pd.concat([df_plot_original, df_plot_completo, df_plot_imputados])
+        
+        # KDE plots con seaborn
+        sns.kdeplot(
+            data=df_combined, 
+            x='valor', 
+            hue='tipo',
+            hue_order=['Original', 'Con imputación', 'Solo imputados'],
+            palette={'Original': '#3498db', 'Con imputación': '#2ecc71', 'Solo imputados': '#e74c3c'},
+            ax=ax,
+            common_norm=False,
+            fill=True,
+            alpha=0.3,
+            linewidth=2.5,
+            legend=False  # Desactivar leyenda individual
+        )
+        
+        # Líneas verticales para las medias
+        ax.axvline(original_sin_nan.mean(), color='#3498db', linestyle='--', 
+                   linewidth=2, alpha=0.8)
+        ax.axvline(imputado_completo.mean(), color='#2ecc71', linestyle='--', 
+                   linewidth=2, alpha=0.8)
+        
+        # Capturar handles y labels solo del primer plot para la leyenda general
+        if idx == 0:
+            legend_handles, legend_labels = ax.get_legend_handles_labels()
+        
+        ax.set_title(f'{col}\n({len(valores_imputados)} imputados, '
+                    f'{len(valores_imputados)/len(df_imputado)*100:.1f}%)',
+                    fontsize=11, fontweight='bold')
+        ax.set_xlabel('Valor', fontsize=9)
+        ax.set_ylabel('Densidad', fontsize=9)
+        ax.grid(alpha=0.3, linestyle='--')
+    
+    # ocultar ejes vacíos
+    for idx in range(n_cols, len(axes)):
+        axes[idx].axis('off')
+    
+    # leyenda general única en la parte superior de la figura
+    fig.legend(
+        ['Original (datos pre-existentes)', 
+         'Con imputación (dataset completo)', 
+         'Solo imputados (valores agregados)',
+         'Media Original',
+         'Media Con imputación'],
+        loc='upper center',
+        bbox_to_anchor=(0.5, 0.98),
+        ncol=5,
+        fontsize=11,
+        frameon=True,
+        fancybox=True,
+        shadow=True,
+        title='Leyenda de Distribuciones',
+        title_fontsize=12
+    )
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Dejar espacio para la leyenda
+    plt.show()
+
+
+
+
+def analisis_completo_imputacion(df_original, df_imputado, columnas_clave=None):
+    """
+    Ejecuta análisis completo de validación de imputación.
+    """
+    
+    # 1. Estadísticas comparativas
+    df_stats = validar_imputacion(df_original, df_imputado, columnas_clave)
+    
+    # 2. Visualizaciones
+    print("COMPARACIÓN GRÁFICA de distribuciones antes y después de la imputación:")
+    visualizar_comparacion_distribuciones(df_original, df_imputado, columnas_clave)
+    
+    return df_stats
+
+
+# %%
+df_stats = analisis_completo_imputacion(df, df_imputado)
+
+# %% [markdown]
+# Analizando los gráficos, concluimos que luego de la imputación, se respetan las distribuciones del conjunto de datos original.
+
+# %%
+df = df_imputado
+
+# %% [markdown]
 # ### Split Train/Test
 
 # %%
 # Separa el 80% para train y 20% para test
-train, test= train_test_split(df, test_size=0.2, random_state=1)
+train, test= train_test_split(df, test_size=0.2, random_state=1) # stratify para evitar el problema de desbalanceo
 
 # %% [markdown]
 # # EDA
@@ -405,6 +836,27 @@ for i, var in enumerate(variables_numericas):
         sns.kdeplot(data=train, x=var, hue='Climate', palette='muted', ax=axes[i // 4, i % 4], hue_order=['Arid', 'Temperate', 'Tropical'], common_norm=False)
 
 plt.tight_layout()
+plt.show()
+
+# %%
+sns.set_theme(style="whitegrid", palette="muted")
+fig, axes = plt.subplots(4, 4, figsize=(20, 18))
+
+axes = axes.flatten()
+
+for i, col in enumerate(variables_numericas):
+    sns.boxplot(data=df, x='RainTomorrow', y=col, ax=axes[i])
+
+    if col in ['Rainfall', 'Evaporation']:
+        axes[i].set_yscale('log')  # Usar escala logarítmica para estas variables
+
+    axes[i].set_title(f'Distribución de {col}', fontsize=14, fontweight='bold')
+    axes[i].set_xlabel('', fontsize=12)
+    axes[i].set_ylabel('', fontsize=12)
+
+
+plt.suptitle('Distribución según si Llueve al Día Siguiente (RainTomorrow)', fontsize=24, y=1.02, fontweight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
 
 # %%
@@ -632,13 +1084,12 @@ print(test[['Date', 'DayOfYear', 'DayOfYear_sin', 'DayOfYear_cos']].head())
 train_eda = train.copy()
 train_eda['RainTomorrow'] = train_eda['RainTomorrow'].astype('category')
 
-# proporción de lluvia para cada dirección del viento
+# cada proporcion de lluvia para cada dirección del viento
 wind_rain_proportion = train_eda.groupby('WindGustDir')['RainTomorrow'].value_counts(normalize=True).unstack()
 
-# Ordenar por la proporción de lluvia (1.0)
+# ordena 
 wind_rain_proportion = wind_rain_proportion.sort_values(by=1.0, ascending=False)
 
-# Graficar
 plt.figure(figsize=(14, 8))
 sns.barplot(x=wind_rain_proportion.index, y=wind_rain_proportion[1.0], palette='viridis', order=wind_rain_proportion.index)
 plt.title('Proporción de Días con Lluvia al Día Siguiente por Dirección de Ráfaga de Viento', fontsize=16)
@@ -656,50 +1107,43 @@ plt.show()
 # ###  Análisis Estadístico (Prueba Chi-Cuadrado)
 
 # %%
-from scipy.stats import chi2_contingency
+tabla_de_contingencia = pd.crosstab(train['WindGustDir'], train['RainTomorrow'])
 
-# Crear una tabla de contingencia
-contingency_table = pd.crosstab(train['WindGustDir'], train['RainTomorrow'])
-
-# Realizar la prueba de Chi-Cuadrado
-chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+# prueba de Chi-Cuadrado
+chi2, p_value, dof, expected = chi2_contingency(tabla_de_contingencia)
 
 print("--- Prueba de Chi-Cuadrado para WindGustDir y RainTomorrow ---")
 print(f"Estadístico Chi2: {chi2:.4f}")
 print(f"P-valor: {p_value}")
 
-# Interpretación del p-valor
-alpha = 0.05
-if p_value < alpha:
+# p-value
+if p_value < 0.05:
     print("\nConclusión: El p-valor es menor que 0.05. Se rechaza la hipótesis nula.")
     print("Existe una asociación estadísticamente significativa entre la dirección del viento y si lloverá mañana.")
 else:
     print("\nConclusión: El p-valor es mayor que 0.05. No se puede rechazar la hipótesis nula.")
     print("No hay evidencia de una asociación estadísticamente significativa entre la dirección del viento y si lloverá mañana.")
 
-
-
-
 # %% [markdown]
-# Hipótesis: el viento es relevante en decirnos si llueve mañana siempre en cuando esté en consonancia con la ubicación de la costa de la ciudad. Recordemos que la gran mayoría de locaciones que poseemos en el dataset son costeras o muy cercanas a una. Por lo tanto, si la costa está al oeste, un viento oeste podría implicar más posibilidad de lluvia, y viceversa. El reciente análisis nos dice que los vientos del este son menos relacionados con lluvia pero tendemos a creer que esto sucede porque simplemente el presente dataset posee menos locaciones con costas al este.
+# Hipótesis: el viento es relevante en decirnos si llueve mañana siempre en cuando esté en consonancia con la ubicación de la costa de la ciudad. Recordemos que la gran mayoría de locaciones que poseemos en el dataset son costeras o muy cercanas a una costa. Por lo tanto, si la costa está al oeste, un viento oeste podría implicar más posibilidad de lluvia, y viceversa. El reciente análisis nos dice que los vientos del este son menos relacionados con lluvia pero tendemos a creer que esto sucede porque simplemente el presente dataset posee menos locaciones con costas al este.
 #
 # Para obtener la información sobre relevancia de la dirección del viento según costa más cercana, vamos a generar una variable relacionada con las costa.
 
 # %%
 direccion_costa = {
-    # --- Costa Este (E) ---
+    # --- Costa al Este (E) ---
     'Brisbane': 'E', 'Canberra': 'E', 'CoffsHarbour': 'E', 'GoldCoast': 'E',
     'MountGinini': 'E', 'Newcastle': 'E', 'NorahHead': 'E', 'NorfolkIsland': 'E',
     'Penrith': 'E', 'Richmond': 'E', 'Sydney': 'E', 'SydneyAirport': 'E',
     'Tuggeranong': 'E', 'Williamtown': 'E', 'Wollongong': 'E', 'BadgerysCreek': 'E',
 
-    # --- Costa Oeste (W) ---
+    # --- Costa al Oeste (W) ---
     'Perth': 'W', 'PerthAirport': 'W', 'PearceRAAF': 'W', 'Witchcliffe': 'W',
 
-    # --- Costa Norte (N) ---
+    # --- Costa al Norte (N) ---
     'Cairns': 'N', 'Darwin': 'N', 'Katherine': 'N', 'Launceston': 'N', 'Townsville': 'N',
 
-    # --- Costa Sur (S) ---
+    # --- Costa al Sur (S) ---
     'Adelaide': 'S', 'Albany': 'S', 'Dartmoor': 'S', 'Hobart': 'S', 'Melbourne': 'S',
     'MountGambier': 'S', 'Nuriootpa': 'S', 'Portland': 'S', 'Sale': 'S',
     'Walpole': 'S', 'Watsonia': 'S',
@@ -715,7 +1159,7 @@ direccion_costa = {
 # Convertimos las variables direccionales en componentes de seno y coseno, porque son cíclicas. Con esto obtenemos dos grandes ventajes, primero no generamos 15 variables dummies (1 para cada direccion) y la otra ventaja es que captamos bien la naturaleza cíclica de la dirección del viento.
 
 # %%
-# Mapeo de las 16 direcciones del viento a ángulos en grados
+# Mapeo de las 16 direcciones a ángulos 
 wind_dir_map = {
     'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
     'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
@@ -725,25 +1169,24 @@ wind_dir_map = {
 
 wind_cols = ['WindGustDir', 'WindDir9am', 'WindDir3pm']
 
-# Iteramos sobre ambos dataframes (train y test)
+# aplicamos a test y train
 for df in [train, test]:
     for col in wind_cols:
-        # Mapear dirección a ángulo
         angles = df[col].map(wind_dir_map)
         
-        # Convertir a radianes
+        # radianes
         radians = np.deg2rad(angles)
         
-        # Calcular seno y coseno (los NaNs se propagarán y los manejaremos después)
+        # Calcular seno y coseno 
         df[f'{col}_sin'] = np.sin(radians)
         df[f'{col}_cos'] = np.cos(radians)
         
-print("Variables de seno y coseno creadas.")
+print("Variables cíclicas creadas.")
 
 
 # %% [markdown]
 # Vamos a generar una variable `IsOnShoreWind` que distinga si el viento viene del mar o de la masa continental.
-# Como tenemos tres variables de dirección del viento, vamos a distinguir cual es más importante. Suponemos que `WindGustDir` y `WindDir3pm` son más relevantes que `WindDir9am`
+# Como tenemos tres variables de dirección del viento, vamos a distinguir cual es más importante para predecir RainTomorrow. Suponemos que `WindGustDir` y `WindDir3pm` son más relevantes que `WindDir9am`
 
 # %%
 # Comparamos WindGustDir, WindDir9am y WindDir3pm para ver cuál tiene la relación más fuerte con la lluvia cuando se convierte a una variable onshore/offshore. para evitar data leakageeste análisis se realiza solo sobre el conjunto de train.
@@ -765,22 +1208,22 @@ train_analysis['CoastDirection'] = train_analysis['Location'].map(direccion_cost
 
 # Crear las 3 variables candidatas
 for col in wind_cols:
-    # Imputar NaNs para el análisis (ESTO QUITARLO CUANDO SE HAGA EL IMPUTADO FINAL)
+    # Imputar NaNs para el análisis (ESTO QUITARLO CUANDO SE HAGA EL IMPUTADO FINAL)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     moda = train_analysis[col].mode()[0]
     train_analysis[col] = train_analysis[col].fillna(moda)
-    # Crear la variable onshore/offshore
+    
     train_analysis[f'IsOnshore_{col}'] = train_analysis.apply(es_viento_marino, axis=1, wind_col_name=col)
 
-# --- Comparación Visual y Estadística ---
+# comparacion visual y estadistica
 best_wind_var = ''
 max_chi2 = -1
 
 for col in wind_cols:
     onshore_col = f'IsOnshore_{col}'
-    
-    # Gráfico de Barras
+
+
     plt.figure(figsize=(6, 4))
-    sns.barplot(data=train_analysis, x=onshore_col, y='RainTomorrow', palette='coolwarm')
+    sns.barplot(data=train_analysis, x=onshore_col, y='RainTomorrow', palette='coolwarm',hue=onshore_col)
     plt.title(f'Probabilidad de Lluvia vs. {onshore_col}')
     plt.ylabel('Proporción de Lluvia')
     plt.xticks([0, 1], ['Offshore', 'Onshore'])
@@ -789,14 +1232,14 @@ for col in wind_cols:
     # Prueba Chi-Cuadrado
     contingency_table = pd.crosstab(train_analysis[onshore_col], train_analysis['RainTomorrow'])
     chi2, p, dof, expected = chi2_contingency(contingency_table)
-    print(f"--- Análisis para {onshore_col} ---")
-    print(f"Estadístico Chi-Cuadrado: {chi2:.2f}")
+    print(f"{onshore_col}")
+    print(f"Chi-Cuadrado: {chi2:.2f}")
     
     if chi2 > max_chi2:
         max_chi2 = chi2
         best_wind_var = col
 
-print(f"\n--- Conclusión del Análisis ---")
+print(f"\nConclusión")
 print(f"La variable de viento con la asociación más fuerte con la lluvia es: '{best_wind_var}'")
 print(f"Usaremos esta variable para crear la característica 'IsOnshoreWind' definitiva.")
 
@@ -810,11 +1253,9 @@ for df in [train, test]:
     df['CoastDirection'] = df['Location'].map(direccion_costa)
     df['IsOnshoreWind'] = df.apply(es_viento_marino, axis=1, wind_col_name=best_wind_var)
 
-# Eliminar columnas originales y auxiliares
+# drop de columnas originales y auxiliares
 train.drop(columns=['CoastDirection'] + wind_cols, inplace=True)
 test.drop(columns=['CoastDirection'] + wind_cols, inplace=True)
-
-print("Variable 'IsOnshoreWind' creada y columnas originales eliminadas.")
 
 # %% [markdown]
 # # Paso 1: Finalización del Preprocesamiento y Feature Engineering
