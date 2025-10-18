@@ -279,7 +279,7 @@ fig.subplots_adjust(top=0.96) # Espacio vertical para el título
 plt.show()
 
 # %% [markdown]
-# Comprobamos que efectivamente la clasificación de climas según koppen ayudo a disminuir la multimodalidad. #TODO redactar bien
+# Comprobamos que efectivamente la clasificación de climas según koppen ayuda a disminuir la multimodalidad al menos sutilmente
 
 # %% [markdown]
 # ## Tratado de Outliers
@@ -291,13 +291,15 @@ plt.show()
 train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.9999])
 
 # %% [markdown]
-# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación. Además aplicamos transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación ya que presentan un incremento abrupto y son muy pocos datos, aún así estamos quedandonos con valores entre 100 y 185 mm que siguen siendo atípicamente grandes (el 99% de los datos presenta valores inferiores a 37mm) pero sabemos que estos valores son posibles y reales y responden al comportamiento conocido de las lluvías en Australia. 
+#
+# Vamos a aplicar transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
 
 # %%
-train['Rainfall'] = np.where(train['Rainfall'] > 101, np.nan, train['Rainfall'])
+train['Rainfall'] = np.where(train['Rainfall'] >= 185, np.nan, train['Rainfall'])
 train['Rainfall_log'] = np.log1p(train['Rainfall'])
 
-test['Rainfall'] = np.where(test['Rainfall'] > 101, np.nan, test['Rainfall'])
+test['Rainfall'] = np.where(test['Rainfall'] >= 185, np.nan, test['Rainfall'])
 test['Rainfall_log'] = np.log1p(test['Rainfall'])
 
 # %% [markdown]
@@ -307,11 +309,14 @@ test['Rainfall_log'] = np.log1p(test['Rainfall'])
 train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
 
 # %% [markdown]
-# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación #TODO justificar especifico
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación ya que presentan un incremento abrupto y son muy pocos datos. Aplicamos transformación logarítmica.  
 
 # %%
-train['Evaporation'] = np.where(train['Evaporation'] > 70, np.nan, train['Evaporation'])
-test['Evaporation'] = np.where(test['Evaporation'] > 70, np.nan, test['Evaporation'])
+train['Evaporation'] = np.where(train['Evaporation'] >= 70, np.nan, train['Evaporation'])
+train['Evaporation_log'] = np.log1p(train['Evaporation'])
+
+test['Evaporation'] = np.where(test['Evaporation'] >= 70, np.nan, test['Evaporation'])
+train['Evaporation_log'] = np.log1p(train['Evaporation'])
 
 # %% [markdown]
 # #### Variable *WindSpeed9am*
@@ -320,10 +325,10 @@ test['Evaporation'] = np.where(test['Evaporation'] > 70, np.nan, test['Evaporati
 train['WindSpeed9am'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
 
 # %% [markdown]
-# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación #TODO justificar especifico
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación ya que presentan un incremento abrupto y son muy pocos datos.
 
 # %%
-train['WindSpeed9am'] = np.where(train['WindSpeed9am'] > 67, np.nan, train['WindSpeed9am'])
+train['WindSpeed9am'] = np.where(train['WindSpeed9am'] >= 67, np.nan, train['WindSpeed9am'])
 
 # %% [markdown]
 # #### Variable *WindSpeed3pm*
@@ -337,14 +342,37 @@ train['WindSpeed3pm'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999]
 # %%
 train['WindGustSpeed'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
 
+# %% [markdown]
+# *WindGustSpeed* Representa la máxima velocidad de viento registrada a lo largo de todo el día, por lo que siempre debe ser mayor o igual que *WindSpeed9am* y que *WindSpeed3pm*, vamos a verificar.
+
 # %%
 train[train['WindGustSpeed'] < train['WindSpeed9am']]
 
 # %%
 train[train['WindGustSpeed'] < train['WindSpeed3pm']]
 
+# %%
+# Transforma WindGustSpeed al máximo valor de velocidad de viento.
+
+train['WindGustSpeed'] = np.where(train['WindGustSpeed'] < train['WindSpeed9am'], train['WindSpeed9am'], train['WindGustSpeed'])
+train['WindGustSpeed'] = np.where(train['WindGustSpeed'] < train['WindSpeed3pm'], train['WindSpeed3pm'], train['WindGustSpeed'])
+
+test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed9am'], test['WindSpeed9am'], test['WindGustSpeed'])
+test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed3pm'], test['WindSpeed3pm'], test['WindGustSpeed'])
+
+
+
+
+
+# %%
+# Separa el 80% para train y 20% para test
+train, test= train_test_split(df, test_size=0.2, random_state=1) # stratify para evitar el problema de desbalanceo
+
 # %% [markdown]
-# ## Análisis
+# ## Feature Engineering
+
+# %%
+predictoras = [] # Lista de features predictoras
 
 # %%
 fig, ax1 = plt.subplots(figsize=(16, 9))
@@ -353,6 +381,8 @@ matriz_correlacion = train[variables_numericas].corr()
 mascara = np.triu(np.ones_like(matriz_correlacion, dtype=bool))
 
 sns.heatmap(data=matriz_correlacion, ax=ax1, annot=True, vmin=-1, vmax=1, mask=mascara)
+
+fig.suptitle('Matriz de correlación de features continuas')
 
 plt.tight_layout()
 plt.show()
@@ -370,8 +400,11 @@ fig.suptitle('Distribución de la variable objetivo RainTomorrow')
 plt.tight_layout()
 plt.show()
 
+# %%
+df["RainTomorrow"].value_counts(normalize=True).round(2)
+
 # %% [markdown]
-# Tenemos un gran desbalance entre las clases de la variable objetivo, 80/20
+# Tenemos un gran desbalance entre las clases de la variable objetivo, 78/22
 
 # %% [markdown]
 # ### Variables *RainToday* y *Rainfall*
@@ -491,240 +524,14 @@ print(proporciones)
 #
 
 # %%
-train = train.drop('RainToday', axis=1)
+predictoras.append('Rainfall_log')
 
 # %% [markdown]
-# ### Variable *Sunshine*
-
-# %%
-# Crea los bins para Sunshine
-bins = [float('-inf'),2.5,5,7.5,9,10,11,12,float('inf')]
-
-intervalos = pd.cut(train['Sunshine'], bins=bins, right=True)
-
-train['Sunshine_range'] = intervalos
-# Convierte los intervalos a strings para que Seaborn pueda manejarlos
-train['Sunshine_range'] = train['Sunshine_range'].astype(str)
-
-# Asegura que los rangos mantengan el orden
-train['Sunshine_range'] = pd.Categorical(
-    train['Sunshine_range'],
-    categories=[str(interval) for interval in intervalos.cat.categories],
-    ordered=True
-)
-
-frecuencias = train['Sunshine_range'].value_counts(normalize=True).sort_index()
-
-fig, ax1 = plt.subplots(figsize=(16, 9))
-sns.histplot(
-    data=train,
-    x='Sunshine_range',
-    hue='RainTomorrow',
-    palette='muted',
-    multiple='fill',  # Mostrar proporciones de RainTomorrow en cada bin
-    ax=ax1,
-)
-
-ax1.set_xlabel('Rango de Sunshine (h)')
-ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
-ax1.set_title('Distribución de horas de sol registradas y si llovió al día siguiente')
-
-ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
-
-ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
-
-# Segundo eje para la frecuencia relativa
-ax2 = ax1.twinx()
-ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
-ax2.legend(loc='upper left')
-
-# Oculta el eje y secundario; tiene la misma escala que el principal.
-ax2.set_axis_off()
-ax2.set_ylim(0, 1)
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ### Variables *Temp9am*, *Temp3pm*, *MinTemp* y *MaxTemp* 
-
-# %%
-fig, axes = plt.subplots(2, 2, figsize=(16, 9))
-for i, var in enumerate(['Temp9am', 'Temp3pm', 'MinTemp', 'MaxTemp']):
-    sns.boxplot(
-        data=train[train['Climate'] == 'Tropical'],
-        x=var,
-        y='RainTomorrow',
-        hue='RainTomorrow',
-        palette='muted',
-        ax=axes[i // 2, i % 2]
-    )
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# Observamos que *MinTemp* presenta una tendencia a temperaturas mínimas mas altas los días previos a que llueva mientras que el resto de las variables por el contrario muestran temperaturas más bajas en los días que llovió al día siguiente. Podríamos sintetizarlo en que los días de lluvia hay menor diferencia entre la mínima y la máxima temperatura a lo largo del día.
-#
-# Vamos a graficar agrupando por cada tipo de clima para ver si este comportamiento se mantiene.
-
-# %%
-# Grafica boxplots comparando variables de temperatura para cada tipo de clima
-
-fig, axes = plt.subplots(3, 4, figsize=(16, 9))
-for i, climate in enumerate(train['Climate'].unique()):
-    for j, var in enumerate(['Temp9am', 'Temp3pm', 'MinTemp', 'MaxTemp']):
-        sns.boxplot(
-            data=train[train['Climate'] == climate],
-            x=var,
-            y='RainTomorrow',
-            hue='RainTomorrow',
-            order=['No', 'Yes'],
-            palette=sns.color_palette('muted')[2*i:2*i+2],
-            ax=axes[i, j]
-        )
-        if j > 0:
-            axes[i, j].set_ylabel('')
-        elif j == 0:
-            axes[i, j].set_ylabel(f'RainTomorrow\n{climate}')
-        if i < 2:
-            axes[i, j].set_xlabel('')
-
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# La tendencia a una menor diferencia entre la máxima y la mínima temperatura en los días que llovió al día siguiente. Por lo que vamos a generar una nueva feature *TempDiff*
-
-# %%
-train['TempDiff'] = train['MaxTemp'] - train['MinTemp']
-
-test['TempDiff'] = test['MaxTemp'] - test['MinTemp']
-
-# %%
-fig, axes = plt.subplots(figsize=(16, 9))
-sns.boxplot(
-    data=train,
-    x='TempDiff',
-    y='RainTomorrow',
-    hue='RainTomorrow',
-    palette='muted',
-)
-
-fig.suptitle("Distribución de TempDiff según RainTomorrow")
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ### Variables *Cloud9am* y *Cloud3pm*
-
-# %%
-train['RainTomorrowDummy'] = np.where(train['RainTomorrow'] == 'Yes', 1, 0)
-proporciones_lluvia = train.dropna().groupby(['Cloud9am', 'Cloud3pm'])['RainTomorrowDummy'].mean().reset_index()
-
-# %%
-fig, ax1 = plt.subplots(figsize=(16, 9))
-
-sns.heatmap(
-    data=proporciones_lluvia.pivot(index='Cloud9am', columns=('Cloud3pm'), values='RainTomorrowDummy'),
-    annot=True,
-    fmt=".2f",
-
-)
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ### Variables *Humidity9am* y *Humidity3pm*
-
-# %%
-fig, axes = plt.subplots(1, 2, figsize=(16, 9))
-for i, var in enumerate(['Humidity9am', 'Humidity3pm']):
-    sns.boxplot(
-        data=train,
-        x=var,
-        hue='RainTomorrow',
-        palette='muted',
-        ax=axes[i]
-    )
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# Las variables tienen mucha colinealidad y el impacto sobre la target parece reducirse a que simplemente mas humedad mas probabilidad de lluvia al día siguiente. Vamos a quedarnos con Humidity3pm que muestra mayor influencia sobre la target #TODO redaccion
-
-# %%
-fig, axes = plt.subplots(3, 2, figsize=(16, 9))
-for i, climate in enumerate(train['Climate'].unique()):
-    for j, var in enumerate(['Humidity9am', 'Humidity3pm']):
-        sns.boxplot(
-            data=train[train['Climate'] == climate],
-            x=var,
-            y='RainTomorrow',
-            hue='RainTomorrow',
-            order=['No', 'Yes'],
-            palette=sns.color_palette('muted')[2*i:2*i+2],
-            ax=axes[i, j]
-        )
-        if j > 0:
-            axes[i, j].set_ylabel('')
-        elif j == 0:
-            axes[i, j].set_ylabel(f'RainTomorrow\n{climate}')
-        if i < 2:
-            axes[i, j].set_xlabel('')
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ### Variables *Pressure9am* y *Pressure3pm*
-
-# %%
-fig, axes = plt.subplots(1, 2, figsize=(16, 9))
-for i, var in enumerate(['Pressure9am', 'Pressure3pm']):
-    sns.boxplot(
-        data=train,
-        x=var,
-        hue='RainTomorrow',
-        palette='muted',
-        ax=axes[i]
-    )
-
-plt.tight_layout()
-plt.show()
-
-# %%
-fig, ax1 = plt.subplots(figsize=(16, 9))
-
-sns.scatterplot(data=train, x='Pressure9am', y='Pressure3pm', hue='RainTomorrow')
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ### Variables *WindSpeed9am*, *WindSpeed3pm* y *WindGustSpeed*
-
-# %%
-fig, axes = plt.subplots(1, 3, figsize=(16, 9))
-for i, var in enumerate(['WindSpeed9am', 'WindSpeed3pm', 'WindGustSpeed']):
-    sns.boxplot(
-        data=train,
-        x=var,
-        hue='RainTomorrow',
-        palette='muted',
-        ax=axes[i]
-    )
-
-plt.tight_layout()
-plt.show()
+# ### Variable *Evaporation*
 
 # %%
 # Crea los bins para Evaporation
-bins = [float('-inf'), 2, 4,6,8,10, float('inf')]
+bins = [float('-inf'), 2.5, 5,7.5, float('inf')]
 
 intervalos = pd.cut(train['Evaporation'], bins=bins, right=True)
 
@@ -772,6 +579,362 @@ plt.tight_layout()
 plt.show()
 
 # %%
+proporciones = train.groupby('Evaporation_range', observed=True)['RainTomorrow'].value_counts(normalize=True).unstack() 
+
+print('Frecuencia relativa de cada grupo\n')
+print(frecuencias)
+print('\n===================================\n')
+print('Proporción de clases de cada grupo\n')
+print(proporciones)
+
+# %% [markdown]
+# El gráfico se construyó con lógica análoga al de *RainFall*. Observamos que a medida que aumenta el rango de evaporación dismininuye gradualmente la propoción de casos en los que llovió al día siguiente. Particularmente para valores de *Evaporation* mayores a 7.5, solo en el 13% de los casos llovió al día siguiente. Vamos a considerar esta variable para nuestro modelo, teniendo en cuenta la transformación logarítmica previamente realizada.
+
+# %%
+predictoras.append('Evaporation_log')
+
+# %% [markdown]
+# ### Variable *Sunshine*
+
+# %%
+# Crea los bins para Sunshine
+bins = [float('-inf'),2.5,5,7.5,9,10,11,12,float('inf')]
+
+intervalos = pd.cut(train['Sunshine'], bins=bins, right=True)
+
+train['Sunshine_range'] = intervalos
+# Convierte los intervalos a strings para que Seaborn pueda manejarlos
+train['Sunshine_range'] = train['Sunshine_range'].astype(str)
+
+# Asegura que los rangos mantengan el orden
+train['Sunshine_range'] = pd.Categorical(
+    train['Sunshine_range'],
+    categories=[str(interval) for interval in intervalos.cat.categories],
+    ordered=True
+)
+
+frecuencias = train['Sunshine_range'].value_counts(normalize=True).sort_index()
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+sns.histplot(
+    data=train,
+    x='Sunshine_range',
+    hue='RainTomorrow',
+    palette='muted',
+    multiple='fill',  # Mostrar proporciones de RainTomorrow en cada bin
+    ax=ax1,
+)
+
+ax1.set_xlabel('Rango de Sunshine (h)')
+ax1.set_ylabel('Proporción de casos que llovió al día siguiente')
+ax1.set_title('Distribución de horas de sol en el día y si llovió al día siguiente')
+
+ax1.set_yticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+ax1.legend(title='', labels=['Llovió al día siguiente', 'No llovió al dia siguiente'], loc='upper right')
+
+# Segundo eje para la frecuencia relativa
+ax2 = ax1.twinx()
+ax2.plot(frecuencias.index, frecuencias, color=sns.color_palette('muted')[3], marker='o', label='Frecuencia relativa')
+ax2.legend(loc='upper left')
+
+# Oculta el eje y secundario; tiene la misma escala que el principal.
+ax2.set_axis_off()
+ax2.set_ylim(0, 1)
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# El gráfico se construyó con lógica análoga al de *RainFall* y *Evaporation*. Observamos que a medida que aumenta el rango de horas de sol dismininuye consistentemente la propoción de casos en los que llovió al día siguiente. Vamos a tener en cuenta esta feature para nuestro modelo.
+
+# %%
+predictoras.append('Sunshine')
+
+# %% [markdown]
+# ### Variables *Temp9am*, *Temp3pm*, *MinTemp* y *MaxTemp* 
+
+# %%
+fig, axes = plt.subplots(2, 2, figsize=(16, 9))
+for i, var in enumerate(['Temp9am', 'Temp3pm', 'MinTemp', 'MaxTemp']):
+    sns.boxplot(
+        data=train,
+        x=var,
+        y='RainTomorrow',
+        hue='RainTomorrow',
+        palette='muted',
+        ax=axes[i // 2, i % 2]
+    )
+
+fig.suptitle("Distribución de varíables de temperatura según RainTomorrow")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Observamos que *MinTemp* presenta una tendencia a temperaturas mínimas mas altas los días previos a que llueva mientras que el resto de las variables por el contrario muestran temperaturas más bajas en los días que llovió al día siguiente. Podríamos sintetizarlo en que los días de lluvia hay menor diferencia entre la mínima y la máxima temperatura a lo largo del día.
+#
+# Vamos a graficar agrupando por cada tipo de clima para ver si este comportamiento se mantiene.
+
+# %%
+# Grafica boxplots comparando variables de temperatura para cada tipo de clima
+
+fig, axes = plt.subplots(3, 4, figsize=(16, 9))
+for i, climate in enumerate(train['Climate'].unique()):
+    for j, var in enumerate(['Temp9am', 'Temp3pm', 'MinTemp', 'MaxTemp']):
+        sns.boxplot(
+            data=train[train['Climate'] == climate],
+            x=var,
+            y='RainTomorrow',
+            hue='RainTomorrow',
+            order=['No', 'Yes'],
+            palette=sns.color_palette('muted')[2*i:2*i+2],
+            ax=axes[i, j]
+        )
+        if j > 0:
+            axes[i, j].set_ylabel('')
+        elif j == 0:
+            axes[i, j].set_ylabel(f'RainTomorrow\n{climate}')
+        if i < 2:
+            axes[i, j].set_xlabel('')
+
+fig.suptitle("Distribución de varíables de temperatura según RainTomorrow por tipo de clima")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# La tendencia a una menor amplitud térmica en los días que llovió al día siguiente se mantiene presente para todos los climas. Por lo que vamos a generar una nueva feature *TempDiff*
+
+# %%
+train['TempDiff'] = train['MaxTemp'] - train['MinTemp']
+
+test['TempDiff'] = test['MaxTemp'] - test['MinTemp']
+
+# %%
+fig, axes = plt.subplots(figsize=(16, 9))
+sns.boxplot(
+    data=train,
+    x='TempDiff',
+    y='RainTomorrow',
+    hue='RainTomorrow',
+    palette='muted',
+)
+
+fig.suptitle("Distribución de TempDiff según RainTomorrow")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# La feature generada muestra una diferencía marcada entre los casos que llovío al día siguiente y los que no. Por ejemplo la mediana de la clase 'Yes' esta fuera de la caja de la clase 'No'. Vamos a considerar a está feature como buena predictora para nuestro modelo,  también vamos a incluir a *MinTemp*.
+
+# %%
+predictoras.append('MinTemp')
+predictoras.append('TempDiff')
+
+# %% [markdown]
+# ### Variables *Cloud9am* y *Cloud3pm*
+
+# %%
+train['RainTomorrowDummy'] = np.where(train['RainTomorrow'] == 'Yes', 1, 0)
+proporciones_lluvia = train.dropna().groupby(['Cloud9am', 'Cloud3pm'])['RainTomorrowDummy'].mean().reset_index()
+
+# %%
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+sns.heatmap(
+    data=proporciones_lluvia.pivot(index='Cloud9am', columns=('Cloud3pm'), values='RainTomorrowDummy'),
+    annot=True,
+    fmt=".2f",
+
+)
+
+fig.suptitle("Probabilidad de RainTomorrow según Cloud9am y Cloud3pm")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Observamos que la probabilidad de que llueva al día siguiente aumenta a medida que aumenta la nubosidad general en el día. Sin embargo el nivel de nubosidad de las 3pm parece ser mucho más determinista para la probabilidad de llueva el próximo día que el de las 9am, por ejemplo:
+#
+# Sin importar que tan nublado haya estado el cielo a las 9am, si a las 3pm el cielo estuvo despejado en el 99.99% de los casos no llovió al día siguiente.
+# Al mismo tiempo, si a las 3pm el cielo estuvo completamente nublado, la proporción de casos en los que llovió al día siguiente se incrementa considerablemente para todos los valores de nubosidad de las 9am.
+#
+# En principio vamos a mantener ambas variables y probar el desempeño del modelo, para luego compararlo eliminando Cloud9am.
+
+# %%
+predictoras.append('Cloud9am')
+predictoras.append('Cloud3pm')
+
+# %% [markdown]
+# ### Variables *Humidity9am* y *Humidity3pm*
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(16, 9))
+for i, var in enumerate(['Humidity9am', 'Humidity3pm']):
+    sns.boxplot(
+        data=train,
+        x=var,
+        y='RainTomorrow',
+        hue='RainTomorrow',
+        palette='muted',
+        ax=axes[i]
+    )
+
+fig.suptitle("Distribución de variables de humedad según RainTomorrow")
+
+plt.tight_layout()
+plt.show()
+
+# %%
+fig, axes = plt.subplots(3, 2, figsize=(16, 9))
+for i, climate in enumerate(train['Climate'].unique()):
+    for j, var in enumerate(['Humidity9am', 'Humidity3pm']):
+        sns.boxplot(
+            data=train[train['Climate'] == climate],
+            x=var,
+            y='RainTomorrow',
+            hue='RainTomorrow',
+            order=['No', 'Yes'],
+            palette=sns.color_palette('muted')[2*i:2*i+2],
+            ax=axes[i, j]
+        )
+        if j > 0:
+            axes[i, j].set_ylabel('')
+        elif j == 0:
+            axes[i, j].set_ylabel(f'RainTomorrow\n{climate}')
+        if i < 2:
+            axes[i, j].set_xlabel('')
+
+fig.suptitle("Distribución de variables de humedad según RainTomorrow por clima")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Las variables presentan una alta colinealidad, en general los días con mayor humedad presentan una mayor de proporción de casos en los que lovió al día siguiente, este comportamiento se mantiene en todos los tipos de clima. Vamos a quedarnos con *Humidity3pm* para reducir la multicolinealidad del módelo ya que presenta una influencia más marcada.
+
+# %%
+predictoras.append('Humidity3pm')
+
+# %% [markdown]
+# ### Variables *Pressure9am* y *Pressure3pm*
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(16, 9))
+for i, var in enumerate(['Pressure9am', 'Pressure3pm']):
+    sns.boxplot(
+        data=train,
+        x=var,
+        y='RainTomorrow',
+        hue='RainTomorrow',
+        palette='muted',
+        ax=axes[i]
+    )
+
+fig.suptitle("Distribución de variables de presión según RainTomorrow")
+
+plt.tight_layout()
+plt.show()
+
+# %%
+fig, axes = plt.subplots(3, 2, figsize=(16, 9))
+for i, climate in enumerate(train['Climate'].unique()):
+    for j, var in enumerate(['Pressure9am', 'Pressure3pm']):
+        sns.boxplot(
+            data=train[train['Climate'] == climate],
+            x=var,
+            y='RainTomorrow',
+            hue='RainTomorrow',
+            order=['No', 'Yes'],
+            palette=sns.color_palette('muted')[2*i:2*i+2],
+            ax=axes[i, j]
+        )
+        if j > 0:
+            axes[i, j].set_ylabel('')
+        elif j == 0:
+            axes[i, j].set_ylabel(f'RainTomorrow\n{climate}')
+        if i < 2:
+            axes[i, j].set_xlabel('')
+
+fig.suptitle("Distribución de variables de presión según RainTomorrow por clima")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Idem variables de humedad. Nos quedamos con *Pressure3pm*
+
+# %%
+predictoras.append('Pressure3pm')
+
+# %% [markdown]
+# ### Variables *WindSpeed9am*, *WindSpeed3pm* y *WindGustSpeed*
+
+# %%
+fig, axes = plt.subplots(1, 3, figsize=(16, 9))
+for i, var in enumerate(['WindSpeed9am', 'WindSpeed3pm', 'WindGustSpeed']):
+    sns.boxplot(
+        data=train,
+        x=var,
+        hue='RainTomorrow',
+        palette='muted',
+        ax=axes[i]
+    )
+
+fig.suptitle("Distribución de WindSpeed9am, WindSpeed3pm y WindGustSpeed según RainTomorrow")
+
+plt.tight_layout()
+plt.show()
+
+# %%
+fig, axes = plt.subplots(3, 3, figsize=(16, 9))
+for i, climate in enumerate(train['Climate'].unique()):
+    for j, var in enumerate(['WindSpeed9am', 'WindSpeed3pm', 'WindGustSpeed']):
+        sns.boxplot(
+            data=train[train['Climate'] == climate],
+            x=var,
+            y='RainTomorrow',
+            hue='RainTomorrow',
+            order=['No', 'Yes'],
+            palette=sns.color_palette('muted')[2*i:2*i+2],
+            ax=axes[i, j]
+        )
+        if j > 0:
+            axes[i, j].set_ylabel('')
+        elif j == 0:
+            axes[i, j].set_ylabel(f'RainTomorrow\n{climate}')
+        if i < 2:
+            axes[i, j].set_xlabel('')
+
+fig.suptitle("Distribución de variables de velocidad de viento según RainTomorrow por clima")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Idem variables de humedad y de temperatura. Nos quedamos con *WindGustSpeed*
+
+# %%
+predictoras.append('WindGustSpeed')
+
+# %%
+
+fig, ax1 = plt.subplots(figsize=(16, 9))
+
+matriz_correlacion = train[predictoras].corr()
+mascara = np.triu(np.ones_like(matriz_correlacion, dtype=bool))
+
+sns.heatmap(data=matriz_correlacion, ax=ax1, annot=True, vmin=-1, vmax=1, mask=mascara)
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ## PreTrain
+
+# %%
 fig = plt.figure(figsize=(16,9))
-px.scatter_3d(train, x='TempDiff', y='Humidity3pm', z='Rainfall', color='RainTomorrow', width=1600, height=900)
+px.scatter_3d(train, x='Sunshine', y='Humidity3pm', z='Rainfall_log', color='RainTomorrow', width=1600, height=900)
 
