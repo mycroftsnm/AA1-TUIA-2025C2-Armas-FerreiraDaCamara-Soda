@@ -360,13 +360,148 @@ train['WindGustSpeed'] = np.where(train['WindGustSpeed'] < train['WindSpeed3pm']
 test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed9am'], test['WindSpeed9am'], test['WindGustSpeed'])
 test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed3pm'], test['WindSpeed3pm'], test['WindGustSpeed'])
 
-
-
-
-
 # %%
 # Separa el 80% para train y 20% para test
 train, test= train_test_split(df, test_size=0.2, random_state=1) # stratify para evitar el problema de desbalanceo
+
+# %% [markdown]
+# ## Imputación
+
+# %%
+from scipy.spatial.distance import cdist
+def get_closest_location_dict():
+    series = []
+    for climate, data in australia_coords.groupby('Climate'):
+        coords = data[['lat','lon']].values
+        dist_matrix = cdist(coords, coords, metric='euclidean')
+        np.fill_diagonal(dist_matrix, np.inf)
+        idxs_min_dist = np.argmin(dist_matrix, axis=1)
+
+        keys = data['location'].values # Ubicacion        
+        values = data['location'].iloc[idxs_min_dist].values # Ubicación más cercana
+
+        series.append(pd.Series(values, index=keys))
+    
+    serie_completa = pd.concat(series)
+    # Retorna dict {Ubicacion: Ubicacion mas cercana}
+    return serie_completa.to_dict() 
+
+
+# %%
+ubicacion_mas_cercana = get_closest_location_dict()
+
+
+# %%
+def imputar_features(df, features, df_test=None):
+    """
+    Imputa NaNs en cada feature usando los datos de df.
+    Si se pasa df_test imputa sobre ese dataframe.
+    """
+    # 1. Crear una copia del DataFrame para trabajar de forma segura
+    if df_test is not None:
+        imputed_df = df_test.copy()
+    else:
+        imputed_df = df.copy()
+    
+    for feature in features:
+        total_imputados = 0
+
+        medianas_location = df.groupby('Location')[feature].median()
+        media_climate_day = df.groupby(['Climate','Date'])[feature].mean()
+        media_climate = df.groupby(['Climate'])[feature].mean()
+
+        df_indexed = df.set_index(['Date', 'Location'])
+        
+        nan_rows = imputed_df[imputed_df[feature].isna()]
+                
+        for index, row in nan_rows.iterrows():
+            
+            location = row['Location']
+            climate = row['Climate']
+            date = row['Date']
+            closest_location = ubicacion_mas_cercana[location]
+            
+            impute_value = np.nan
+            
+            # 1. Intenta imputar por valor del mismo día en ubicación mas cercana     
+            try:
+                impute_value = df_indexed.loc[(date, closest_location), feature]
+            except KeyError:
+                pass
+                
+            # 2. Intenta imputar por media del día del mismo tipo de clima
+            if pd.isna(impute_value):
+                impute_value = media_climate_day.get((climate, date))
+            
+            # 3. Intenta imputar por mediana hístórica de la misma ubicación
+            if pd.isna(impute_value):
+                impute_value = medianas_location.get(location)
+
+            # 4. Intenta imputar por media histórica del mismo tipo de clima
+            if pd.isna(impute_value):
+                impute_value = media_climate.get(climate)
+                
+            if not pd.isna(impute_value):
+                if feature == 'Cloud3pm' or feature == 'Cloud9am':
+                    impute_value = round(impute_value)
+                imputed_df.loc[index, feature] = impute_value
+                total_imputados += 1
+            else:
+                print('No se pudo imputar')
+        print(f'Se imputaron {total_imputados} para la feature {feature}')
+
+    return imputed_df
+
+
+# %%
+train_imputed = imputar_features(train, variables_numericas)
+
+# Muestra cuántos NaNs quedan después de la imputación
+print("\nConteo de NaNs después de la imputación")
+print(train_imputed[variables_numericas].isna().sum().sum())
+
+# %%
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+def comparar_distribucion_final_kde(df_original, df_imputado):
+    """
+    Compara la distribución de:
+    1. Valores originales no faltantes (el esqueleto de la distribución).
+    2. Valores finales (el DF imputado completo, incluyendo imputados y originales).
+    """
+    
+    # 1. Preparar el DataFrame Original (Solo valores no faltantes)
+    # Filtramos el original para solo ver los datos que tenía al inicio.
+    df_no_nan = df_original.copy()
+    df_no_nan['Origen'] = 'Distribución Original'
+    
+    # 2. Preparar el DataFrame Imputado (Distribución Final Completa)
+    # Usamos el DF imputado completo, ya que representa la distribución final.
+    df_final = df_imputado.copy()
+    df_final['Origen'] = 'Distribución con datos imputados'
+    
+    # 3. Concatenar para trazar ambos conjuntos de datos
+    df_combinado = pd.concat([df_no_nan, df_final], ignore_index=True)
+    
+    fig, axes = plt.subplots(4, 4, figsize=(20, 18))
+
+    for i, var in enumerate(variables_numericas):
+        if var == 'Cloud3pm' or var == 'Cloud9am':
+            sns.countplot(data=df_combinado, x=var, hue='Origen', palette='muted', ax=axes[i // 4, i % 4])
+        else:
+            sns.kdeplot(data=df_combinado, x=var, hue='Origen', palette='muted', ax=axes[i // 4, i % 4], common_norm=False)
+
+    fig.suptitle('Distribución de variables numéricas según tipo de clima', fontsize=18)
+
+    plt.tight_layout()
+    fig.subplots_adjust(top=0.96) # Espacio vertical para el título
+    plt.show()
+
+
+# %%
+comparar_distribucion_final_kde(train, train_imputed)
 
 # %% [markdown]
 # ## Feature Engineering
