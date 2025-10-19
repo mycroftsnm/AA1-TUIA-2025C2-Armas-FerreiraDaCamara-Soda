@@ -128,6 +128,9 @@ df = df.dropna(subset=['RainTomorrow'])
 # Drop de filas con mas de la mitad de features con valor nulo
 df = df[df.isna().sum(axis=1) <= 11]
 
+# %% [markdown]
+# # Análisis de las variables Cloud9am y Cloud3pm
+
 # %%
 df['Cloud3pm'].value_counts(dropna=False)
 
@@ -718,11 +721,17 @@ def analisis_completo_imputacion(df_original, df_imputado, columnas_clave=None):
 df_stats = analisis_completo_imputacion(df, df_imputado)
 
 # %% [markdown]
-# Analizando los gráficos, concluimos que luego de la imputación, se respetan las distribuciones del conjunto de datos original.
+# El análisis gráfico muestra que el proceso de imputación mantiene las distribuciones originales del conjunto de datos.
+
+# %% [markdown]
+# No obstante, en etapas posteriores del trabajo identificamos una limitación metodológica: la imputación debería realizarse 
+# *después* de la separación train-test para prevenir data leakage. El procedimiento correcto consistiría en imputar 
+# los valores faltantes del conjunto de test basándose exclusivamente en las estadísticas y datos del conjunto de entrenamiento.
+# Por lo tanto dejamos para etapas posteriores la re-implementación de la imputación siguiendo este enfoque más riguroso.
+
 
 # %%
 df = df_imputado
-
 # %% [markdown]
 # ### Split Train/Test
 
@@ -1227,7 +1236,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### Variables *WindSpeed9am*, *WindSpeed3pm* y *WindGustSpeed*
+# ### Variables *WindSpeed9am*, *WindSpeed3pm* y *WindGustSpeed* 
 
 # %%
 fig, axes = plt.subplots(1, 3, figsize=(16, 9))
