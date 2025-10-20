@@ -607,6 +607,8 @@ test['RainySeason'] = np.where(
     1,
     0) 
 
+predictoras.append('RainySeason')
+
 # %% [markdown]
 # ### Variables *RainToday* y *Rainfall*
 
@@ -650,7 +652,7 @@ plt.show()
 # %% [markdown]
 # En el gráfico de la izquierda observamos la proporción de días en los que llovió o no según si llovió el día anterior. Dicho de otra manera, la probabilidad de que vuelva a llover al día siguiente de un día de lluvia. 
 #
-# Vemos que la probabilidad de que llueva se triplica pasando de 15,3% a 46,3%. Sin embargo no deja de ser siempre más probable que no llueva a que sí lo haga, sin importar si llovió el día anterior.
+# Vemos que la probabilidad de que llueva se triplica pasando de 15,1% a 46,2%. Sin embargo no deja de ser siempre más probable que no llueva a que sí lo haga, sin importar si llovió el día anterior.
 #
 # En el gráfico de la derecha en cambió tenemos la proporción de días que llovió o no el día anterior dado que llovío o no hoy. En este caso las proporciones dieron muy similares a las del otro gráfico, por lo que el análisis es analogo: Es mas probable que haya llovido ayer si llovió hoy, pero siempre es más probable que no haya llovido ayer.
 
@@ -717,11 +719,11 @@ print(proporciones)
 
 # %% [markdown]
 # Para hacer el gráfico discretizamos *Rainfall* en 4 rangos de forma que mantengan una frecuencia relativa equilibrada y representativa.
-# El primer grupo, que corresponde 0.0 mm de lluvia concentra el 64% de los datos, los demás grupos se reparten los datos equilibradamente, teniendo todos los grupos al menos 10% de los datos.
+# El primer grupo, que corresponde 0.0 mm de lluvia concentra el 63% de los datos, los demás grupos se reparten los datos equilibradamente, teniendo todos los grupos al menos 10% de los datos.
 #
 # Podemos observar que la probabilidad de que llueva al dia siguiente es creciente a pasos cada vez mas grandes a medida que que sube el rango de mm de lluvia.
 #
-# Particularmente la probabilidad de lluvia para el rango `(0.0,1.0]` es de 0.25 y 0.12 para el rango sin lluvia, es decir se duplica, aún asi la variable *RainToday* solo tiene en cuenta los días que cayeron mas de 1mm de agua, es por esto que vamos a quedarnos con la variable *Rainfall* y descartar la variable *RainToday* ya que nos aporta la misma información pero con menos nivel de detalle.
+# Particularmente la probabilidad de lluvia para el rango `(0.0,1.0]` es de 0.25, duplicando el valor 0.13 del rango sin lluvia, aún asi la variable *RainToday* solo tiene en cuenta los días que cayeron mas de 1mm de agua, es por esto que vamos a quedarnos con la variable *Rainfall* y descartar la variable *RainToday* ya que nos aporta la misma información pero con menos nivel de detalle.
 #
 
 # %%
@@ -792,7 +794,7 @@ print('Proporción de clases de cada grupo\n')
 print(proporciones)
 
 # %% [markdown]
-# El gráfico se construyó con lógica análoga al de *RainFall*. Observamos que a medida que aumenta el rango de evaporación dismininuye gradualmente la propoción de casos en los que llovió al día siguiente. Particularmente para valores de *Evaporation* mayores a 7.5, solo en el 13% de los casos llovió al día siguiente. Vamos a considerar esta variable para nuestro modelo, teniendo en cuenta la transformación logarítmica.
+# El gráfico se construyó con lógica análoga al de *RainFall*. Observamos que a medida que aumenta el rango de evaporación dismininuye gradualmente la propoción de casos en los que llovió al día siguiente. Particularmente para valores de *Evaporation* mayores a 7.5, solo en el 14% de los casos llovió al día siguiente. Vamos a considerar esta variable para nuestro modelo, teniendo en cuenta la transformación logarítmica.
 
 # %%
 train['Evaporation_log'] = np.log1p(train['Evaporation'])
