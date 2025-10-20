@@ -465,18 +465,16 @@ def comparar_distribucion_final_kde(df_original, df_imputado):
     2. Valores finales (el DF imputado completo, incluyendo imputados y originales).
     """
     
-    # 1. Preparar el DataFrame Original (Solo valores no faltantes)
-    # Filtramos el original para solo ver los datos que tenía al inicio.
-    df_no_nan = df_original.copy()
-    df_no_nan['Origen'] = 'Distribución Original'
+    # Prepara el DataFrame Original, setea Origen
+    df_inicial = df_original.copy()
+    df_inicial['Origen'] = 'Distribución Original'
     
-    # 2. Preparar el DataFrame Imputado (Distribución Final Completa)
-    # Usamos el DF imputado completo, ya que representa la distribución final.
+    # Prepara el DataFrame Imputado, setea Origen
     df_final = df_imputado.copy()
     df_final['Origen'] = 'Distribución con datos imputados'
     
-    # 3. Concatenar para trazar ambos conjuntos de datos
-    df_combinado = pd.concat([df_no_nan, df_final], ignore_index=True)
+    # Concatenar para tener un único conjuntos de datos
+    df_combinado = pd.concat([df_inicial, df_final], ignore_index=True)
     
     fig, axes = plt.subplots(4, 4, figsize=(20, 18))
 
@@ -495,6 +493,42 @@ def comparar_distribucion_final_kde(df_original, df_imputado):
 
 # %%
 comparar_distribucion_final_kde(train, train_imputed)
+
+# %% [markdown]
+# Las distribuciones se mantienen fieles a los datos originales luego de la imputación, resaltan *Sunshine*, *Cloud9am* y *Cloud3pm* como las features que mas cambiaron su distribución lo cuál tiene sentido debido a que son las features que tenían mayor cantidad de datos faltantes.
+#
+# Vamos a analizar *Sunshine* separando por clima
+
+# %%
+# Prepara el DataFrame Original, setea Origen
+df_inicial = train.copy()
+df_inicial['Origen'] = 'Distribución Original'
+
+# Prepara el DataFrame Imputado, setea Origen
+df_final = train_imputed.copy()
+df_final['Origen'] = 'Distribución con datos imputados'
+
+# Concatenar para tener un único conjuntos de datos
+df_combinado = pd.concat([df_inicial, df_final], ignore_index=True)
+
+fig, axes = plt.subplots(3, 1, figsize=(16, 9))
+for i, climate in enumerate(df_combinado['Climate'].unique()):
+    sns.kdeplot(
+        data=df_combinado[df_combinado['Climate'] == climate],
+        x='Sunshine',
+        hue='Origen',
+        ax=axes[i],
+        common_norm=False,
+        palette=sns.color_palette('muted')[2*i:2*i+2],
+    )
+    axes[i].set_ylabel(climate)
+
+plt.tight_layout()
+plt.show()
+
+
+# %% [markdown]
+# Concluímos que la imputación fue buena, ya que las distribuciones se mantienen sin grandes alteraciones.
 
 # %%
 test = imputar_features(train, variables_numericas, test) # Imputar en test con los datos de train
