@@ -1571,56 +1571,12 @@ y_test = test['RainTomorrow']
 
 
 # %% [markdown]
-# ### 1.1 Función Auxiliar para Imputación de Valores Nulos y poder ver que la regresión logística funcione
-# Completa con la mediana para numéricas y la moda para categóricas 
-
-# %%
-def imputar_valores_nulos(df_train, df_test):
-    """
-    Función auxiliar para imputar valores nulos usando la mediana para columnas
-    numéricas y la moda para las categóricas.
-    Ajusta los imputadores con los datos de entrenamiento y transforma ambos sets.
-    """
-    print("Iniciando imputación de valores nulos...")
-    
-    # Identificar tipos de columnas desde el dataframe de entrenamiento
-    numerical_cols = df_train.select_dtypes(include=np.number).columns
-    categorical_cols = df_train.select_dtypes(include=['object']).columns
-
-    # Crear copias para evitar advertencias de pandas
-    train_copy = df_train.copy()
-    test_copy = df_test.copy()
-
-    # Imputar variables numéricas
-    imputer_numerical = SimpleImputer(strategy='median')
-    train_copy[numerical_cols] = imputer_numerical.fit_transform(train_copy[numerical_cols])
-    test_copy[numerical_cols] = imputer_numerical.transform(test_copy[numerical_cols])
-    print(f"Se imputaron {len(numerical_cols)} columnas numéricas.")
-
-    # Imputar variables categóricas
-    imputer_categorical = SimpleImputer(strategy='most_frequent')
-    train_copy[categorical_cols] = imputer_categorical.fit_transform(train_copy[categorical_cols])
-    test_copy[categorical_cols] = imputer_categorical.transform(test_copy[categorical_cols])
-    print(f"Se imputaron {len(categorical_cols)} columnas categóricas.")
-
-    # Verificación final
-    print("NaNs restantes en train set después de imputar:", train_copy.isnull().sum().sum())
-    print("NaNs restantes en test set después de imputar:", test_copy.isnull().sum().sum())
-    
-    return train_copy, test_copy
-
-# Aplicar la función de imputación
-X_train, X_test = imputar_valores_nulos(X_train, X_test)
-
-
-# %% [markdown]
 # ### 1.2 Codificación de Variables Categóricas (Dummies). ==AUXILIAR TAMBIÉN==
 
 # %%
-# Identificar columnas categóricas después de la imputación
 categorical_cols = X_train.select_dtypes(include=['object']).columns
 
-# Aplicar One-Hot Encoding
+# One-Hot Encoding
 X_train = pd.get_dummies(X_train, columns=categorical_cols, drop_first=True)
 X_test = pd.get_dummies(X_test, columns=categorical_cols, drop_first=True)
 
@@ -1652,128 +1608,386 @@ X_test_scaled = scaler.transform(X_test)
 # Convertir de nuevo a DataFrame para mantener los nombres de las columnas
 X_train = pd.DataFrame(X_train_scaled, columns=X_train.columns)
 X_test = pd.DataFrame(X_test_scaled, columns=X_test.columns)
-
 # %% [markdown]
-# # Paso 2: Construcción del Modelo de Regresión Logística
+# # Pipeline Comparativo: Estrategias de Manejo de Desbalanceo en Regresión Logística
 
 # %%
-# Instanciar y entrenar el modelo
-log_reg = LogisticRegression(random_state=42, max_iter=1000)#, solver='liblinear') #solver liblinear (descenso por coordenadas), ideal para datasets pequeños o binarios, compatible con regularización L1/L2 
-log_reg.fit(X_train, y_train)
-# posteriormente probar balanceo con modelo = LogisticRegression(class_weight='balanced')
-# balancea asisgnando pesos distintos a la función de costo, no modifica la cantidad de datos en cada clase
-# %% [markdown]
-# # Paso 3: Evaluación Inicial (Umbral por defecto 0.5)
-
-# %%
-# Realizar predicciones
-y_pred_class = log_reg.predict(X_test)
-y_pred_proba = log_reg.predict_proba(X_test)[:, 1] # Probabilidad de pertenencia a la clase positiva (`Mañana Llueve`)
-
-# %% [markdown]
-# ### 3.1 Métricas
-
-# %%
-print("Accuracy:", accuracy_score(y_test, y_pred_class))
-print("\nAUC-ROC:", roc_auc_score(y_test, y_pred_proba))
-print("\nReporte de Clasificación:\n", classification_report(y_test, y_pred_class))
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
+                             f1_score, roc_auc_score, confusion_matrix, 
+                             roc_curve, classification_report, precision_recall_curve)
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from collections import defaultdict
+import warnings
+warnings.filterwarnings('ignore')
 
 # %% [markdown]
-# ### 3.2 Matriz de Confusión y Curva ROC
+# ## 1. Función para Entrenar y Evaluar Modelos
 
 # %%
-# Matriz de Confusión
-cm = confusion_matrix(y_test, y_pred_class)
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['No llueve', 'Llueve'],
-            yticklabels=['No llueve', 'Llueve'])
-plt.ylabel('Valor Real')
-plt.xlabel('Predicción')
-plt.title('Matriz de Confusión (Umbral 0.5)')
+def train_and_evaluate(X_train, y_train, X_test, y_test, method_name, 
+                       model=None, apply_threshold_tuning=True):
+    """
+    Entrena un modelo de regresión logística y calcula métricas de evaluación.
+    
+    Parámetros:
+    -----------
+    X_train, y_train : Features y target de entrenamiento
+    X_test, y_test : Features y target de prueba
+    method_name : str, nombre del método para identificación
+    model : modelo preconfigurado (opcional)
+    apply_threshold_tuning : bool, si se debe buscar el umbral óptimo
+    
+    Retorna:
+    --------
+    dict con métricas, predicciones y modelo entrenado
+    """
+    
+    # Entrenar modelo
+    if model is None:
+        model = LogisticRegression(random_state=42, max_iter=1000)
+    
+    model.fit(X_train, y_train)
+    
+    # Predicciones
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    y_pred_default = model.predict(X_test)
+    
+    # Búsqueda de umbral óptimo (maximizando F1-Score)
+    best_threshold = 0.5
+    y_pred_optimal = y_pred_default.copy()
+    
+    if apply_threshold_tuning:
+        precision, recall, thresholds = precision_recall_curve(y_test, y_pred_proba)
+        f1_scores = 2 * recall[:-1] * precision[:-1] / (recall[:-1] + precision[:-1] + 1e-10)
+        best_threshold = thresholds[np.argmax(f1_scores)]
+        y_pred_optimal = (y_pred_proba >= best_threshold).astype(int)
+    
+    # Calcular métricas con umbral por defecto (0.5)
+    metrics_default = {
+        'method': method_name,
+        'threshold': 0.5,
+        'accuracy': accuracy_score(y_test, y_pred_default),
+        'precision': precision_score(y_test, y_pred_default),
+        'recall': recall_score(y_test, y_pred_default),
+        'f1': f1_score(y_test, y_pred_default),
+        'auc_roc': roc_auc_score(y_test, y_pred_proba)
+    }
+    
+    # Calcular métricas con umbral óptimo
+    metrics_optimal = {
+        'method': method_name,
+        'threshold': best_threshold,
+        'accuracy': accuracy_score(y_test, y_pred_optimal),
+        'precision': precision_score(y_test, y_pred_optimal),
+        'recall': recall_score(y_test, y_pred_optimal),
+        'f1': f1_score(y_test, y_pred_optimal),
+        'auc_roc': roc_auc_score(y_test, y_pred_proba)
+    }
+    
+    return {
+        'model': model,
+        'metrics_default': metrics_default,
+        'metrics_optimal': metrics_optimal,
+        'y_pred_proba': y_pred_proba,
+        'y_pred_default': y_pred_default,
+        'y_pred_optimal': y_pred_optimal,
+        'best_threshold': best_threshold
+    }
+
+# %% [markdown]
+# ## 2. Ejecución de las 4 Estrategias
+
+# %%
+# Diccionario para almacenar resultados
+results = {}
+
+print("="*80)
+print("ENTRENAMIENTO Y EVALUACIÓN DE MODELOS")
+print("="*80)
+
+# %% [markdown]
+# ### 2.1 Método 1: Sin Corrección (Baseline)
+
+# %%
+print("\n1. Modelo Base (Sin corrección de desbalanceo)")
+print("-" * 60)
+
+results['baseline'] = train_and_evaluate(
+    X_train, y_train, X_test, y_test, 
+    method_name='Sin Corrección'
+)
+
+print(f"✓ Entrenamiento completado")
+print(f"  Umbral óptimo encontrado: {results['baseline']['best_threshold']:.4f}")
+
+# %% [markdown]
+# ### 2.2 Método 2: Oversampling (SMOTE)
+
+# %%
+print("\n2. Modelo con Oversampling (SMOTE)")
+print("-" * 60)
+
+# Aplicar SMOTE solo en el conjunto de entrenamiento
+smote = SMOTE(random_state=42)
+X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
+
+print(f"  Distribución original: {dict(pd.Series(y_train).value_counts())}")
+print(f"  Distribución después de SMOTE: {dict(pd.Series(y_train_smote).value_counts())}")
+
+results['oversampling'] = train_and_evaluate(
+    X_train_smote, y_train_smote, X_test, y_test,
+    method_name='Oversampling (SMOTE)'
+)
+
+print(f"✓ Entrenamiento completado")
+print(f"  Umbral óptimo encontrado: {results['oversampling']['best_threshold']:.4f}")
+
+# %% [markdown]
+# ### 2.3 Método 3: Undersampling
+
+# %%
+print("\n3. Modelo con Undersampling")
+print("-" * 60)
+
+# Aplicar Random Undersampling solo en el conjunto de entrenamiento
+rus = RandomUnderSampler(random_state=42)
+X_train_rus, y_train_rus = rus.fit_resample(X_train, y_train)
+
+print(f"  Distribución original: {dict(pd.Series(y_train).value_counts())}")
+print(f"  Distribución después de undersampling: {dict(pd.Series(y_train_rus).value_counts())}")
+
+results['undersampling'] = train_and_evaluate(
+    X_train_rus, y_train_rus, X_test, y_test,
+    method_name='Undersampling'
+)
+
+print(f"✓ Entrenamiento completado")
+print(f"  Umbral óptimo encontrado: {results['undersampling']['best_threshold']:.4f}")
+
+# %% [markdown]
+# ### 2.4 Método 4: Class Weights
+
+# %%
+print("\n4. Modelo con Class Weights")
+print("-" * 60)
+
+# Crear modelo con class_weight='balanced'
+model_weighted = LogisticRegression(random_state=42, max_iter=1000, class_weight='balanced')
+
+results['class_weights'] = train_and_evaluate(
+    X_train, y_train, X_test, y_test,
+    method_name='Class Weights',
+    model=model_weighted
+)
+
+print(f"✓ Entrenamiento completado")
+print(f"  Umbral óptimo encontrado: {results['class_weights']['best_threshold']:.4f}")
+
+# %% [markdown]
+# ## 3. Comparación de Métricas
+
+# %%
+# Crear DataFrames comparativos
+metrics_comparison_default = pd.DataFrame([
+    results[method]['metrics_default'] for method in results.keys()
+])
+
+metrics_comparison_optimal = pd.DataFrame([
+    results[method]['metrics_optimal'] for method in results.keys()
+])
+
+print("\n" + "="*80)
+print("COMPARACIÓN DE MÉTRICAS")
+print("="*80)
+
+print("\n📊 Métricas con Umbral por Defecto (0.5):")
+print("-" * 80)
+print(metrics_comparison_default.round(4).to_string(index=False))
+
+print("\n📊 Métricas con Umbral Óptimo (F1-Score maximizado):")
+print("-" * 80)
+print(metrics_comparison_optimal.round(4).to_string(index=False))
+
+# %% [markdown]
+# ## 4. Visualizaciones Comparativas
+
+# %% [markdown]
+# ### 4.1 Gráfico de Barras: Comparación de Métricas
+
+# %%
+fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+fig.suptitle('Comparación de Métricas entre Estrategias (Umbral Óptimo)', 
+             fontsize=16, fontweight='bold')
+
+metrics_to_plot = ['accuracy', 'precision', 'recall', 'f1', 'auc_roc']
+colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+
+for idx, metric in enumerate(metrics_to_plot):
+    ax = axes[idx // 3, idx % 3]
+    values = [results[method]['metrics_optimal'][metric] for method in results.keys()]
+    methods = list(results.keys())
+    
+    bars = ax.bar(methods, values, color=colors, alpha=0.8, edgecolor='black')
+    ax.set_ylabel(metric.upper(), fontsize=11, fontweight='bold')
+    ax.set_ylim([0, 1])
+    ax.grid(axis='y', alpha=0.3)
+    ax.set_xticklabels(methods, rotation=45, ha='right')
+    
+    # Añadir valores sobre las barras
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{height:.3f}', ha='center', va='bottom', fontsize=9)
+
+# Eliminar el último subplot vacío
+axes[1, 2].axis('off')
+
+plt.tight_layout()
 plt.show()
 
-# Curva ROC
-fpr, tpr, thresholds_roc = roc_curve(y_test, y_pred_proba)
-plt.figure(figsize=(8, 6))
-plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'Curva ROC (AUC = {roc_auc_score(y_test, y_pred_proba):.2f})')
-plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-plt.xlabel('Tasa de Falsos Positivos (FPR)')
-plt.ylabel('Tasa de Verdaderos Positivos (TPR)')
-plt.title('Curva ROC')
-plt.legend(loc="lower right")
+# %% [markdown]
+# ### 4.2 Curvas ROC Superpuestas
+
+# %%
+plt.figure(figsize=(10, 8))
+
+colors_roc = {'baseline': '#1f77b4', 'oversampling': '#ff7f0e', 
+              'undersampling': '#2ca02c', 'class_weights': '#d62728'}
+
+for method_name, result in results.items():
+    fpr, tpr, _ = roc_curve(y_test, result['y_pred_proba'])
+    auc = result['metrics_optimal']['auc_roc']
+    plt.plot(fpr, tpr, color=colors_roc[method_name], lw=2.5, 
+             label=f"{result['metrics_optimal']['method']} (AUC = {auc:.3f})")
+
+plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Clasificador Aleatorio')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('Tasa de Falsos Positivos (FPR)', fontsize=12, fontweight='bold')
+plt.ylabel('Tasa de Verdaderos Positivos (TPR)', fontsize=12, fontweight='bold')
+plt.title('Comparación de Curvas ROC', fontsize=14, fontweight='bold')
+plt.legend(loc="lower right", fontsize=10)
+plt.grid(alpha=0.3)
+plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# # Paso 4: Búsqueda y Ajuste del Umbral (Threshold Tuning)
+# ### 4.3 Matrices de Confusión Comparativas
 
 # %%
-# Calcular precision, recall para diferentes umbrales
-precision, recall, thresholds_pr = precision_recall_curve(y_test, y_pred_proba)
+fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+fig.suptitle('Matrices de Confusión (Umbral Óptimo)', fontsize=16, fontweight='bold')
 
-# Convertir a F1-score
-# Se ignora el último valor de precision y recall para alinear con thresholds
-f1_scores = 2 * recall[:-1] * precision[:-1] / (recall[:-1] + precision[:-1])
+for idx, (method_name, result) in enumerate(results.items()):
+    ax = axes[idx // 2, idx % 2]
+    cm = confusion_matrix(y_test, result['y_pred_optimal'])
+    
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
+                xticklabels=['No Llueve', 'Llueve'],
+                yticklabels=['No Llueve', 'Llueve'],
+                cbar_kws={'label': 'Cantidad'})
+    
+    ax.set_ylabel('Valor Real', fontsize=11, fontweight='bold')
+    ax.set_xlabel('Predicción', fontsize=11, fontweight='bold')
+    ax.set_title(f"{result['metrics_optimal']['method']}\n"
+                 f"Umbral: {result['best_threshold']:.3f} | "
+                 f"F1: {result['metrics_optimal']['f1']:.3f}",
+                 fontsize=12, fontweight='bold')
 
-# Encontrar el mejor umbral
-best_threshold_f1 = thresholds_pr[np.argmax(f1_scores)]
-print(f"Mejor umbral para maximizar F1-Score: {best_threshold_f1:.4f}")
-
-# %% [markdown]
-# ### 4.1 Visualización del Trade-off
-
-# %%
-plt.figure(figsize=(10, 7))
-plt.plot(thresholds_pr, precision[:-1], "b--", label="Precision")
-plt.plot(thresholds_pr, recall[:-1], "g-", label="Recall")
-plt.plot(thresholds_pr, f1_scores, "r-", label="F1-Score", alpha=0.6)
-plt.axvline(x=best_threshold_f1, color='purple', linestyle='--', label=f'Mejor Umbral (F1-Score) = {best_threshold_f1:.2f}')
-plt.xlabel("Umbral")
-plt.title("Precision, Recall y F1-Score vs. Umbral de Decisión")
-plt.legend(loc="best")
-plt.grid(True)
+plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# # Paso 5: Interpretación de Coeficientes
+# ### 4.4 Comparación Precision vs Recall
 
 # %%
-# Crear un DataFrame con los coeficientes
-coefficients = pd.DataFrame({
-    'Feature': X_train.columns,
-    'Coefficient': log_reg.coef_[0]
-})
+fig, ax = plt.subplots(figsize=(10, 8))
 
-# Calcular Odds Ratios
-coefficients['Odds_Ratio'] = np.exp(coefficients['Coefficient'])
+for method_name, result in results.items():
+    precision = result['metrics_optimal']['precision']
+    recall = result['metrics_optimal']['recall']
+    f1 = result['metrics_optimal']['f1']
+    
+    ax.scatter(recall, precision, s=300, alpha=0.7, 
+              color=colors_roc[method_name],
+              edgecolors='black', linewidth=2,
+              label=f"{result['metrics_optimal']['method']} (F1={f1:.3f})")
+    
+    # Añadir etiquetas
+    ax.annotate(result['metrics_optimal']['method'], 
+               (recall, precision),
+               textcoords="offset points", xytext=(0,10), 
+               ha='center', fontsize=9, fontweight='bold')
 
-# Ordenar por el valor absoluto del coeficiente para ver la importancia
-coefficients['Abs_Coefficient'] = np.abs(coefficients['Coefficient'])
-coefficients = coefficients.sort_values(by='Abs_Coefficient', ascending=False)
+ax.set_xlabel('Recall', fontsize=12, fontweight='bold')
+ax.set_ylabel('Precision', fontsize=12, fontweight='bold')
+ax.set_title('Precision vs Recall (Umbral Óptimo)', fontsize=14, fontweight='bold')
+ax.legend(loc='best', fontsize=10)
+ax.grid(alpha=0.3)
+ax.set_xlim([0, 1.05])
+ax.set_ylim([0, 1.05])
 
-# Mostrar los 15 más influyentes
-print("Top 15 features más influyentes:")
-print(coefficients.head(15).drop('Abs_Coefficient', axis=1))
+# Añadir líneas de referencia de F1
+f1_levels = [0.4, 0.6, 0.8]
+for f1 in f1_levels:
+    x = np.linspace(0.01, 1)
+    y = (f1 * x) / (2 * x - f1)
+    y = np.where(y > 0, y, np.nan)
+    ax.plot(x, y, 'k--', alpha=0.2, linewidth=1)
+    ax.text(0.9, (f1 * 0.9) / (2 * 0.9 - f1), f'F1={f1}', 
+           fontsize=8, alpha=0.5)
+
+plt.tight_layout()
+plt.show()
 
 # %% [markdown]
-# # Paso 6: Evaluación Final sobre el Conjunto de Test (con umbral óptimo)
+# ## 5. Tabla Resumen Final
 
 # %%
-# Aplicar el umbral óptimo a las probabilidades
-y_pred_final = (y_pred_proba >= best_threshold_f1).astype(int)
+print("\n" + "="*80)
+print("RESUMEN FINAL Y RECOMENDACIONES")
+print("="*80)
 
-print(f"Métricas con el umbral óptimo de {best_threshold_f1:.4f}\n")
-print("Accuracy:", accuracy_score(y_test, y_pred_final))
-print("\nReporte de Clasificación:\n", classification_report(y_test, y_pred_final))
+# Encontrar el mejor modelo según F1-Score
+best_method = max(results.items(), 
+                 key=lambda x: x[1]['metrics_optimal']['f1'])
 
-# %%
-# Matriz de Confusión Final
-cm_final = confusion_matrix(y_test, y_pred_final)
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm_final, annot=True, fmt='d', cmap='Greens',
-            xticklabels=['No llueve', 'Llueve'],
-            yticklabels=['No llueve', 'Llueve'])
-plt.ylabel('Valor Real')
-plt.xlabel('Predicción')
-plt.title(f'Matriz de Confusión (Umbral {best_threshold_f1:.2f})')
-plt.show()
+print(f"\n🏆 Mejor modelo según F1-Score: {best_method[1]['metrics_optimal']['method']}")
+print(f"   F1-Score: {best_method[1]['metrics_optimal']['f1']:.4f}")
+print(f"   Precision: {best_method[1]['metrics_optimal']['precision']:.4f}")
+print(f"   Recall: {best_method[1]['metrics_optimal']['recall']:.4f}")
+print(f"   AUC-ROC: {best_method[1]['metrics_optimal']['auc_roc']:.4f}")
+print(f"   Umbral óptimo: {best_method[1]['best_threshold']:.4f}")
+
+# Tabla resumen
+print("\n📋 Tabla Resumen Completa:")
+print("-" * 80)
+summary = metrics_comparison_optimal.copy()
+summary = summary.round(4)
+summary = summary.sort_values('f1', ascending=False)
+print(summary.to_string(index=False))
+
+print("\n" + "="*80)
+
+# %% [markdown]
+# ## 6. Análisis de Trade-offs
+#
+# ### Interpretación de los Resultados:
+#
+# - **Sin Corrección (Baseline)**: Puede tener alta accuracy pero pobre recall en la clase minoritaria
+# - **Oversampling (SMOTE)**: Genera datos sintéticos, mejora recall pero puede causar overfitting
+# - **Undersampling**: Reduce datos de la clase mayoritaria, rápido pero pierde información
+# - **Class Weights**: Ajusta la función de costo sin modificar el dataset, buen balance
+#
+# ### Recomendaciones según el objetivo:
+#
+# - **Maximizar Recall** (detectar todas las lluvias): Elegir oversampling o undersampling
+# - **Maximizar Precision** (evitar falsas alarmas): Elegir el modelo con mayor precision
+# - **Balance general**: Elegir el modelo con mayor F1-Score (usualmente class weights o SMOTE)
+# - **Interpretabilidad**: Class weights mantiene el dataset original
