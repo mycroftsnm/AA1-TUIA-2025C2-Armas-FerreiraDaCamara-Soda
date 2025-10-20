@@ -50,6 +50,9 @@ df = df.dropna(subset=['RainTomorrow'])
 df = df[df.isna().sum(axis=1) <= 11]
 
 # %%
+df['Date'] = pd.to_datetime(df['Date'])
+
+# %%
 df['Cloud3pm'].value_counts(dropna=False)
 
 # %%
@@ -293,14 +296,11 @@ train['Rainfall'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.999, 0.99
 # %% [markdown]
 # Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación ya que presentan un incremento abrupto y son muy pocos datos, aún así estamos quedandonos con valores entre 100 y 185 mm que siguen siendo atípicamente grandes (el 99% de los datos presenta valores inferiores a 37mm) pero sabemos que estos valores son posibles y reales y responden al comportamiento conocido de las lluvías en Australia. 
 #
-# Vamos a aplicar transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
+# Después de imputar vamos a aplicar transformación logarítmica para reducir el impacto sobre la media y prevenir overfitting en el modelo de regresión logística.
 
 # %%
 train['Rainfall'] = np.where(train['Rainfall'] >= 185, np.nan, train['Rainfall'])
-train['Rainfall_log'] = np.log1p(train['Rainfall'])
-
 test['Rainfall'] = np.where(test['Rainfall'] >= 185, np.nan, test['Rainfall'])
-test['Rainfall_log'] = np.log1p(test['Rainfall'])
 
 # %% [markdown]
 # #### Variable *Evaporation*
@@ -309,14 +309,11 @@ test['Rainfall_log'] = np.log1p(test['Rainfall'])
 train['Evaporation'].describe(percentiles=[0.25, 0.5, 0.75, 0.95, 0.99, 0.9999])
 
 # %% [markdown]
-# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación ya que presentan un incremento abrupto y son muy pocos datos. Aplicamos transformación logarítmica.  
+# Eliminamos los valores mayores al 99.99% de los datos para su posterior imputación ya que presentan un incremento abrupto y son muy pocos datos. Aplicamos transformación logarítmica luego de imputar al igual que con *Rainfall*.  
 
 # %%
 train['Evaporation'] = np.where(train['Evaporation'] >= 70, np.nan, train['Evaporation'])
-train['Evaporation_log'] = np.log1p(train['Evaporation'])
-
 test['Evaporation'] = np.where(test['Evaporation'] >= 70, np.nan, test['Evaporation'])
-train['Evaporation_log'] = np.log1p(train['Evaporation'])
 
 # %% [markdown]
 # #### Variable *WindSpeed9am*
@@ -359,10 +356,6 @@ train['WindGustSpeed'] = np.where(train['WindGustSpeed'] < train['WindSpeed3pm']
 
 test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed9am'], test['WindSpeed9am'], test['WindGustSpeed'])
 test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed3pm'], test['WindSpeed3pm'], test['WindGustSpeed'])
-
-# %%
-# Separa el 80% para train y 20% para test
-train, test= train_test_split(df, test_size=0.2, random_state=1) # stratify para evitar el problema de desbalanceo
 
 # %% [markdown]
 # ## Imputación
@@ -493,7 +486,7 @@ def comparar_distribucion_final_kde(df_original, df_imputado):
         else:
             sns.kdeplot(data=df_combinado, x=var, hue='Origen', palette='muted', ax=axes[i // 4, i % 4], common_norm=False)
 
-    fig.suptitle('Distribución de variables numéricas según tipo de clima', fontsize=18)
+    fig.suptitle('Comparativa de distribuciones de variables numéricas', fontsize=18)
 
     plt.tight_layout()
     fig.subplots_adjust(top=0.96) # Espacio vertical para el título
@@ -502,6 +495,11 @@ def comparar_distribucion_final_kde(df_original, df_imputado):
 
 # %%
 comparar_distribucion_final_kde(train, train_imputed)
+
+# %%
+test = imputar_features(train, variables_numericas, test) # Imputar en test con los datos de train
+
+train = train_imputed
 
 # %% [markdown]
 # ## Feature Engineering
@@ -540,6 +538,74 @@ df["RainTomorrow"].value_counts(normalize=True).round(2)
 
 # %% [markdown]
 # Tenemos un gran desbalance entre las clases de la variable objetivo, 78/22
+
+# %%
+# Generamos una dummy para RainTomorrow
+train['RainTomorrow_dummy'] = np.where(train['RainTomorrow'] == 'Yes', 1, 0)
+
+# %% [markdown]
+# ### Variable *Date*
+
+# %% [markdown]
+# Generamos la variable *Month* para analizar el comportamiendo de la lluvía a lo largo de los meses.
+
+# %%
+train['Month'] = train['Date'].dt.month
+
+# Verificamos la proporción de datos de cada mes separando por tipo de clima
+
+for climate in train['Climate'].unique():
+    print(f'\nClima {climate}')
+    print(train[train['Climate'] == climate]['Month'].value_counts(normalize=True).sort_index())
+
+# %% [markdown]
+# Confirmamos que los datos están uniformemente distribuidos a lo largo de los meses para cada tipo de clima. Continuamos analizando la influencia del mes en la variable objetivo *RainTomorrow*
+
+# %%
+train['Month'] = train['Date'].dt.month
+test['Month'] = test['Date'].dt.month
+
+
+fig, axes = plt.subplots(3, 1, figsize=(16, 9))
+for i, climate in enumerate(train['Climate'].unique()):
+    sns.histplot(
+        data=train[train['Climate'] == climate],
+        x='Month',
+        hue='RainTomorrow',
+        ax=axes[i],
+        hue_order=['No', 'Yes'],
+        multiple='fill',
+        discrete=True,
+        palette=sns.color_palette('muted')[2*i:2*i+2],
+    )
+    axes[i].set_ylabel(f'Proporción de RainTomorrow\n{climate}')
+    axes[i].set_xticks([1,2,3,4,5,6,7,8,9,10,11,12])
+    axes[i].set_xticklabels(['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'])
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Observamos que los climas *Tropical* y *Temperate* aumentan considerablemente la proporción de dias que llovió al dia siguiente, entre diciembre y marzo *Tropical* y entre junio y septiembre *Temperate*.
+# El clima árido mantiene una proporción baja a lo largo del año, levemente más baja en los primeros 4 meses del año.
+#
+# Como los períodos de mayor actividad suceden en momentos distintos para cada clima no vamos a codificar el mes usando seno y coseno, en cambio vamos a generar la variable *RainySeason* para marcar el cuatrimestre de mayor lluvia para cada clima.
+
+# %%
+meses_tropical = set([12,1,2,3])
+meses_temperate = set([6,7,8,9])
+
+train['RainySeason'] = np.where(
+    ((train['Climate'] == 'Tropical') & train['Month'].isin(meses_tropical)) |
+    ((train['Climate'] == 'Temperate') & train['Month'].isin(meses_temperate)),
+    1,
+    0)
+
+test['RainySeason'] = np.where(
+    ((test['Climate'] == 'Tropical') & test['Month'].isin(meses_tropical)) |
+    ((test['Climate'] == 'Temperate') & test['Month'].isin(meses_temperate)),
+    1,
+    0) 
 
 # %% [markdown]
 # ### Variables *RainToday* y *Rainfall*
@@ -659,6 +725,9 @@ print(proporciones)
 #
 
 # %%
+train['Rainfall_log'] = np.log1p(train['Rainfall'])
+test['Rainfall_log'] = np.log1p(test['Rainfall'])
+
 predictoras.append('Rainfall_log')
 
 # %% [markdown]
@@ -723,9 +792,12 @@ print('Proporción de clases de cada grupo\n')
 print(proporciones)
 
 # %% [markdown]
-# El gráfico se construyó con lógica análoga al de *RainFall*. Observamos que a medida que aumenta el rango de evaporación dismininuye gradualmente la propoción de casos en los que llovió al día siguiente. Particularmente para valores de *Evaporation* mayores a 7.5, solo en el 13% de los casos llovió al día siguiente. Vamos a considerar esta variable para nuestro modelo, teniendo en cuenta la transformación logarítmica previamente realizada.
+# El gráfico se construyó con lógica análoga al de *RainFall*. Observamos que a medida que aumenta el rango de evaporación dismininuye gradualmente la propoción de casos en los que llovió al día siguiente. Particularmente para valores de *Evaporation* mayores a 7.5, solo en el 13% de los casos llovió al día siguiente. Vamos a considerar esta variable para nuestro modelo, teniendo en cuenta la transformación logarítmica.
 
 # %%
+train['Evaporation_log'] = np.log1p(train['Evaporation'])
+test['Evaporation_log'] = np.log1p(test['Evaporation'])
+
 predictoras.append('Evaporation_log')
 
 # %% [markdown]
@@ -1013,6 +1085,7 @@ for i, var in enumerate(['WindSpeed9am', 'WindSpeed3pm', 'WindGustSpeed']):
     sns.boxplot(
         data=train,
         x=var,
+        y='RainTomorrow',
         hue='RainTomorrow',
         palette='muted',
         ax=axes[i]
@@ -1071,5 +1144,5 @@ plt.show()
 
 # %%
 fig = plt.figure(figsize=(16,9))
-px.scatter_3d(train, x='Sunshine', y='Humidity3pm', z='Rainfall_log', color='RainTomorrow', width=1600, height=900)
+px.scatter_3d(train, x='Humidity3pm', y='Cloud3pm', z='Rainfall_log', color='RainTomorrow', width=1600, height=900)
 
