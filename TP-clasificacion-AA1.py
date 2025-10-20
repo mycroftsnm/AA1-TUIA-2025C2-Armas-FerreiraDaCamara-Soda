@@ -568,7 +568,7 @@ plt.tight_layout()
 plt.show()
 
 # %%
-df["RainTomorrow"].value_counts(normalize=True).round(2)
+train["RainTomorrow"].value_counts(normalize=True).round(2)
 
 # %% [markdown]
 # Tenemos un gran desbalance entre las clases de la variable objetivo, 78/22
@@ -1176,9 +1176,43 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## PreTrain
+# # PreTrain
+
+# %% [markdown]
+# ## Estandarización 
+
+# %% [markdown]
+# Estandarizamos todas las features númericas continuas que consideramos predictoras
 
 # %%
-fig = plt.figure(figsize=(16,9))
-px.scatter_3d(train, x='Humidity3pm', y='Cloud3pm', z='Rainfall_log', color='RainTomorrow', width=1600, height=900)
+predictoras_continuas = predictoras.copy()
+predictoras_continuas.remove('Cloud9am')
+predictoras_continuas.remove('Cloud3pm')
+predictoras_continuas.remove('RainySeason')
+print(f"Variables a estandarizar: {predictoras_continuas}")
 
+# %%
+scaler = StandardScaler()
+scaler.fit(train[predictoras_continuas])
+
+train[predictoras_continuas] = scaler.transform(train[predictoras_continuas])
+test[predictoras_continuas] = scaler.transform(test[predictoras_continuas])
+
+# %% [markdown]
+# ## Generación de variables dummy's
+
+# %% [markdown]
+# Transformamos la variable categórica *Climate* mediante OneHotEncoding para incorporarlas al modelo.
+
+# %%
+train['ClimateArid'] = np.where(train['Climate'] == 'Arid', 1, 0)
+test['ClimateArid'] = np.where(test['Climate'] == 'Arid', 1, 0)
+
+train['ClimateTropical'] = np.where(train['Climate'] == 'Tropical', 1, 0)
+test['ClimateTropical'] = np.where(test['Climate'] == 'Tropical', 1, 0)
+
+predictoras.append('ClimateArid')
+predictoras.append('ClimateTropical')
+
+# %%
+print(f'Vamos a utilizar las siguientes variables para entrenar el modelo:\n{predictoras}')
