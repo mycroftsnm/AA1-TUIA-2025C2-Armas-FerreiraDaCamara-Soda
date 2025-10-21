@@ -231,7 +231,7 @@ fig.show()
 
 # %%
 # Separa el 80% para train y 20% para test
-train, test= train_test_split(df, test_size=0.2, random_state=1)
+train, test= train_test_split(df, test_size=0.2, random_state=1, stratify=df['RainTomorrow'])
 
 # %% [markdown]
 # # EDA
@@ -1243,9 +1243,7 @@ def graficar_matriz_confusion(y_true, y_pred, titulo):
 # ## Modelo 1: Regresión Logística sin balanceo
 
 # %%
-print("=" * 60)
-print("MODELO 1: Regresión Logística SIN balanceo")
-print("=" * 60)
+print("\nMODELO 1: Regresión Logística SIN balanceo\n")
 
 lr_base = LogisticRegression(max_iter=1000, random_state=42)
 lr_base.fit(X_train_scaled, y_train)
@@ -1263,10 +1261,10 @@ graficar_matriz_confusion(y_test, y_pred_base, 'Sin balanceo')
 # %% [markdown]
 # ## Modelo 2: Regresión Logística con class_weight='balanced'
 
-# %%
-print("=" * 60)
-print("MODELO 2: Regresión Logística con class_weight='balanced'")
-print("=" * 60)
+# %%\n
+
+print("\nMODELO 2: Regresión Logística con class_weight='balanced'\n")
+
 
 lr_balanced = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
 lr_balanced.fit(X_train_scaled, y_train)
@@ -1285,9 +1283,7 @@ graficar_matriz_confusion(y_test, y_pred_balanced, 'Class Weight Balanced')
 # ## Modelo 3: Regresión Logística con SMOTE
 
 # %%
-print("=" * 60)
-print("MODELO 3: Regresión Logística con SMOTE")
-print("=" * 60)
+print("\nMODELO 3: Regresión Logística con SMOTE\n")
 
 # Aplicar SMOTE al conjunto de entrenamiento
 smote = SMOTE(random_state=42)
@@ -1313,9 +1309,7 @@ graficar_matriz_confusion(y_test, y_pred_smote, 'SMOTE')
 # ## Modelo 4: Regresión Logística con Random Under-Sampling
 
 # %%
-print("=" * 60)
-print("MODELO 4: Regresión Logística con Random Under-Sampling")
-print("=" * 60)
+print("\nMODELO 4: Regresión Logística con Random Under-Sampling\n")
 
 # Aplicar Random Under-Sampling
 rus = RandomUnderSampler(random_state=42)
@@ -1341,9 +1335,7 @@ graficar_matriz_confusion(y_test, y_pred_rus, 'Random Under-Sampling')
 # ## Modelo 5: Regresión Logística con Random Over-Sampling
 
 # %%
-print("=" * 60)
-print("MODELO 5: Regresión Logística con Random Over-Sampling")
-print("=" * 60)
+print("\nMODELO 5: Regresión Logística con Random Over-Sampling\n")
 
 # Aplicar Random Over-Sampling
 ros = RandomOverSampler(random_state=42)
@@ -1364,35 +1356,6 @@ print("\nReporte de clasificación:")
 print(classification_report(y_test, y_pred_ros, target_names=['No llueve', 'Llueve']))
 
 graficar_matriz_confusion(y_test, y_pred_ros, 'Random Over-Sampling')
-
-# %% [markdown]
-# ## Modelo 6: Regresión Logística con SMOTE + Tomek Links
-
-# %%
-print("=" * 60)
-print("MODELO 6: Regresión Logística con SMOTE + Tomek Links")
-print("=" * 60)
-
-# Aplicar SMOTE + Tomek Links
-smote_tomek = SMOTETomek(random_state=42)
-X_train_st, y_train_st = smote_tomek.fit_resample(X_train_scaled, y_train)
-
-print(f"Distribución después de SMOTE + Tomek:")
-print(pd.Series(y_train_st).value_counts())
-
-lr_st = LogisticRegression(max_iter=1000, random_state=42)
-lr_st.fit(X_train_st, y_train_st)
-
-y_pred_st = lr_st.predict(X_test_scaled)
-y_pred_proba_st = lr_st.predict_proba(X_test_scaled)[:, 1]
-
-resultados_st = evaluar_modelo(y_test, y_pred_st, y_pred_proba_st, 'SMOTE + Tomek')
-
-print("\nReporte de clasificación:")
-print(classification_report(y_test, y_pred_st, target_names=['No llueve', 'Llueve']))
-
-graficar_matriz_confusion(y_test, y_pred_st, 'SMOTE + Tomek Links')
-
 # %% [markdown]
 # ## Comparación de todos los modelos
 
@@ -1403,13 +1366,10 @@ df_resultados = pd.DataFrame([
     resultados_balanced,
     resultados_smote,
     resultados_rus,
-    resultados_ros,
-    resultados_st
+    resultados_ros
 ])
 
-print("\n" + "=" * 80)
-print("COMPARACIÓN DE TODOS LOS MODELOS")
-print("=" * 80)
+print("\nCOMPARACIÓN DE MODELOS")
 print(df_resultados.to_string(index=False))
 
 # %%
@@ -1450,8 +1410,7 @@ modelos_predicciones = [
     ('Class Weight Balanced', y_pred_proba_balanced),
     ('SMOTE', y_pred_proba_smote),
     ('Random Under-Sampling', y_pred_proba_rus),
-    ('Random Over-Sampling', y_pred_proba_ros),
-    ('SMOTE + Tomek', y_pred_proba_st)
+    ('Random Over-Sampling', y_pred_proba_ros)
 ]
 
 for nombre, y_pred_proba in modelos_predicciones:
@@ -1507,10 +1466,8 @@ elif mejor_modelo_nombre == 'SMOTE':
     modelo = lr_smote
 elif mejor_modelo_nombre == 'Random Under-Sampling':
     modelo = lr_rus
-elif mejor_modelo_nombre == 'Random Over-Sampling':
+else:# mejor_modelo_nombre == 'Random Over-Sampling':
     modelo = lr_ros
-else:  # SMOTE + Tomek
-    modelo = lr_st
 
 # %%
 # Importancia de features
@@ -1535,4 +1492,223 @@ plt.show()
 
 print("\nTop 10 features más importantes:")
 print(coeficientes.head(10).to_string(index=False))
+# %%
+# %% [markdown]
+# ## Optimización de Umbral de Decisión
+
+# %%
+def encontrar_umbral_optimo(y_true, y_pred_proba, metrica='f1'):
+    """
+    Encuentra el umbral óptimo según la métrica especificada
+    
+    Parámetros:
+    - metrica: 'f1', 'recall', 'precision', 'youden' (recall + specificity - 1)
+    """
+    umbrales = np.linspace(0, 1, 101)
+    scores = []
+    
+    for umbral in umbrales:
+        y_pred = (y_pred_proba >= umbral).astype(int)
+        
+        if metrica == 'f1':
+            score = f1_score(y_true, y_pred)
+        elif metrica == 'recall':
+            score = classification_report(y_true, y_pred, output_dict=True, zero_division=0)['1']['recall']
+        elif metrica == 'precision':
+            score = classification_report(y_true, y_pred, output_dict=True, zero_division=0)['1']['precision']
+        elif metrica == 'youden':
+            tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+            sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+            specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+            score = sensitivity + specificity - 1  # Índice de Youden
+        else:
+            raise ValueError("Métrica no reconocida")
+        
+        scores.append(score)
+    
+    idx_optimo = np.argmax(scores)
+    return umbrales[idx_optimo], scores[idx_optimo], umbrales, scores
+
+# %%
+def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
+    """
+    Grafica cómo varían las métricas según el umbral
+    """
+    umbrales = np.linspace(0, 1, 101)
+    f1_scores = []
+    precision_scores = []
+    recall_scores = []
+    
+    for umbral in umbrales:
+        y_pred = (y_pred_proba >= umbral).astype(int)
+        f1_scores.append(f1_score(y_true, y_pred))
+        report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+        precision_scores.append(report['1']['precision'])
+        recall_scores.append(report['1']['recall'])
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(umbrales, f1_scores, label='F1-Score', linewidth=2)
+    ax.plot(umbrales, precision_scores, label='Precision', linewidth=2)
+    ax.plot(umbrales, recall_scores, label='Recall', linewidth=2)
+    
+    # Marca el umbral óptimo para F1
+    idx_f1_max = np.argmax(f1_scores)
+    ax.axvline(umbrales[idx_f1_max], color='red', linestyle='--', 
+               label=f'Umbral óptimo F1={umbrales[idx_f1_max]:.2f}')
+    
+    ax.set_xlabel('Umbral de Decisión', fontsize=12)
+    ax.set_ylabel('Score', fontsize=12)
+    ax.set_title(f'Métricas vs Umbral - {nombre_modelo}', fontsize=14, fontweight='bold')
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return umbrales[idx_f1_max]
+
+# %% [markdown]
+# ### Análisis de umbrales para cada modelo
+
+# %%
+# Diccionario para almacenar umbrales óptimos
+umbrales_optimos = {}
+
+modelos_info = [
+    ('Sin balanceo', y_pred_proba_base, lr_base),
+    ('Class Weight Balanced', y_pred_proba_balanced, lr_balanced),
+    ('SMOTE', y_pred_proba_smote, lr_smote),
+    ('Random Under-Sampling', y_pred_proba_rus, lr_rus),
+    ('Random Over-Sampling', y_pred_proba_ros, lr_ros)
+]
+
+print("=" * 80)
+print("OPTIMIZACIÓN DE UMBRALES")
+print("=" * 80)
+
+for nombre, y_pred_proba, modelo in modelos_info:
+    print(f"\n{'='*60}")
+    print(f"Modelo: {nombre}")
+    print('='*60)
+    
+    # Encuentra umbral óptimo para F1
+    umbral_f1, score_f1, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'f1')
+    
+    # Encuentra umbral óptimo para Recall (si priorizas detectar todos los días de lluvia)
+    umbral_recall, score_recall, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'recall')
+    
+    # Encuentra umbral óptimo para Youden (balance entre sensibilidad y especificidad)
+    umbral_youden, score_youden, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'youden')
+    
+    print(f"\nUmbral por defecto: 0.50")
+    print(f"Umbral óptimo para F1-Score: {umbral_f1:.3f} (F1={score_f1:.3f})")
+    print(f"Umbral óptimo para Recall: {umbral_recall:.3f} (Recall={score_recall:.3f})")
+    print(f"Umbral óptimo para Youden: {umbral_youden:.3f} (Youden={score_youden:.3f})")
+    
+    # Guarda el umbral óptimo para F1
+    umbrales_optimos[nombre] = umbral_f1
+    
+    # Grafica métricas vs umbral
+    graficar_metricas_por_umbral(y_test, y_pred_proba, nombre)
+    
+    # Compara resultados con umbral 0.5 vs óptimo
+    y_pred_05 = (y_pred_proba >= 0.5).astype(int)
+    y_pred_opt = (y_pred_proba >= umbral_f1).astype(int)
+    
+    print(f"\n--- Comparación con umbral 0.5 vs óptimo ({umbral_f1:.3f}) ---")
+    print("\nCon umbral 0.5:")
+    print(classification_report(y_test, y_pred_05, target_names=['No llueve', 'Llueve']))
+    
+    print(f"\nCon umbral óptimo {umbral_f1:.3f}:")
+    print(classification_report(y_test, y_pred_opt, target_names=['No llueve', 'Llueve']))
+
+# %% [markdown]
+# ### Comparación final con umbrales optimizados
+
+# %%
+# Recalcula métricas con umbrales optimizados
+resultados_optimizados = []
+
+for nombre, y_pred_proba, modelo in modelos_info:
+    umbral_opt = umbrales_optimos[nombre]
+    y_pred_opt = (y_pred_proba >= umbral_opt).astype(int)
+    
+    resultados = {
+        'Modelo': nombre,
+        'Umbral': umbral_opt,
+        'Accuracy': accuracy_score(y_test, y_pred_opt),
+        'Precision': classification_report(y_test, y_pred_opt, output_dict=True)['1']['precision'],
+        'Recall': classification_report(y_test, y_pred_opt, output_dict=True)['1']['recall'],
+        'F1-Score': f1_score(y_test, y_pred_opt),
+        'ROC-AUC': roc_auc_score(y_test, y_pred_proba)  # ROC-AUC no depende del umbral
+    }
+    resultados_optimizados.append(resultados)
+
+df_resultados_opt = pd.DataFrame(resultados_optimizados)
+
+print("\n" + "=" * 90)
+print("COMPARACIÓN CON UMBRALES OPTIMIZADOS")
+print("=" * 90)
+print(df_resultados_opt.to_string(index=False))
+
+# %%
+# Comparación lado a lado: umbral 0.5 vs óptimo
+df_comparacion = df_resultados.copy()
+df_comparacion['Tipo'] = 'Umbral 0.5'
+df_resultados_opt_copy = df_resultados_opt.drop('Umbral', axis=1).copy()
+df_resultados_opt_copy['Tipo'] = 'Umbral Óptimo'
+
+df_combinado = pd.concat([df_comparacion, df_resultados_opt_copy], ignore_index=True)
+
+# %%
+# Visualización comparativa
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+metricas_comparar = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+
+for idx, metrica in enumerate(metricas_comparar):
+    ax = axes[idx // 2, idx % 2]
+    
+    sns.barplot(data=df_combinado, x='Modelo', y=metrica, hue='Tipo', 
+                palette=['lightblue', 'darkblue'], ax=ax)
+    
+    ax.set_title(f'{metrica}', fontsize=14, fontweight='bold')
+    ax.set_xlabel('')
+    ax.set_ylabel(metrica, fontsize=12)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+    ax.set_ylim(0, 1)
+    ax.legend(title='')
+    ax.grid(axis='y', alpha=0.3)
+
+fig.suptitle('Comparación: Umbral 0.5 vs Umbral Óptimo', fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ### Recomendaciones según caso de uso
+
+# %%
+# Muestra el mejor modelo para cada caso de uso
+print("MEJOR MODELO POR CASO DE USO (con umbral optimizado)")
+
+idx_mejor_recall = df_resultados_opt['Recall'].idxmax()
+idx_mejor_precision = df_resultados_opt['Precision'].idxmax()
+idx_mejor_f1 = df_resultados_opt['F1-Score'].idxmax()
+
+print(f"\nMejor para RECALL (detectar todos los días de lluvia):")
+print(f"  {df_resultados_opt.loc[idx_mejor_recall, 'Modelo']}")
+print(f"  Recall: {df_resultados_opt.loc[idx_mejor_recall, 'Recall']:.3f}")
+print(f"  Umbral: {df_resultados_opt.loc[idx_mejor_recall, 'Umbral']:.3f}")
+
+print(f"\nMejor para PRECISION (evitar falsas alarmas):")
+print(f"  {df_resultados_opt.loc[idx_mejor_precision, 'Modelo']}")
+print(f"  Precision: {df_resultados_opt.loc[idx_mejor_precision, 'Precision']:.3f}")
+print(f"  Umbral: {df_resultados_opt.loc[idx_mejor_precision, 'Umbral']:.3f}")
+
+print(f"\nMejor para F1-SCORE (balance):")
+print(f"  {df_resultados_opt.loc[idx_mejor_f1, 'Modelo']}")
+print(f"  F1-Score: {df_resultados_opt.loc[idx_mejor_f1, 'F1-Score']:.3f}")
+print(f"  Umbral: {df_resultados_opt.loc[idx_mejor_f1, 'Umbral']:.3f}")
 # %%
