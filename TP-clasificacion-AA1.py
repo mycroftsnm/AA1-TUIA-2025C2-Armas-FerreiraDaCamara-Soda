@@ -373,6 +373,12 @@ test['WindGustSpeed'] = np.where(test['WindGustSpeed'] < test['WindSpeed3pm'], t
 # %% [markdown]
 # ## Imputación
 
+# %% [markdown]
+# Análisis de variables faltantes e imputación de las mismas.
+
+# %%
+train.isnull().sum()
+
 # %%
 from scipy.spatial.distance import cdist
 def get_closest_location_dict():
@@ -412,14 +418,12 @@ def imputar_features(df, features, df_test=None):
     for feature in features:
         total_imputados = 0
 
-        medianas_location = df.groupby('Location')[feature].median()
-        media_climate_day = df.groupby(['Climate','Date'])[feature].mean()
-        media_climate = df.groupby(['Climate'])[feature].mean()
-
         df_indexed = df.set_index(['Date', 'Location'])
         
         nan_rows = imputed_df[imputed_df[feature].isna()]
                 
+        variables_direccion_viento = ['WindDir9am', 'WindDir3pm', 'WindGustDir']
+
         for index, row in nan_rows.iterrows():
             
             location = row['Location']
@@ -434,18 +438,47 @@ def imputar_features(df, features, df_test=None):
                 impute_value = df_indexed.loc[(date, closest_location), feature]
             except KeyError:
                 pass
-                
-            # 2. Intenta imputar por media del día del mismo tipo de clima
-            if pd.isna(impute_value):
-                impute_value = media_climate_day.get((climate, date))
-            
-            # 3. Intenta imputar por mediana hístórica de la misma ubicación
-            if pd.isna(impute_value):
-                impute_value = medianas_location.get(location)
 
-            # 4. Intenta imputar por media histórica del mismo tipo de clima
             if pd.isna(impute_value):
-                impute_value = media_climate.get(climate)
+                if feature in variables_direccion_viento: # Categóricas
+                    # c2. Intenta imputar con el valor de dirección del viento de otra hora del mismo registro
+                    for var in variables_direccion_viento:
+                        if pd.notna(row[var]):
+                            impute_value = row[var]
+                            break
+
+                    if pd.isna(impute_value):
+                        # c3. Intenta imputar con moda del mismo día para el mismo tipo de clima
+                        moda_climate_day_series = df.loc[
+                            (df['Climate'] == climate) & (df['Date'] == date), feature
+                        ].value_counts()
+
+                        if moda_climate_day_series.empty:
+                            impute_value = np.nan
+                        else:
+                            impute_value = moda_climate_day_series.index[0]
+
+                    if pd.isna(impute_value):
+                        # c4. Intenta imputar con moda histórica del tipo de clima
+                        moda_climate_series = df.loc[
+                            (df['Climate'] == climate) & (df['Date'] == date), feature
+                        ].value_counts()
+
+                        if moda_climate_series.empty:
+                            impute_value = np.nan
+                        else:
+                            impute_value = moda_climate_series.index[0]
+
+                else: # Numéricas
+                        
+                    # n2. Intenta imputar por media del día del mismo tipo de clima
+                    media_climate_day = df.groupby(['Climate','Date'])[feature].mean()
+                    impute_value = media_climate_day.get((climate, date))
+                    
+                    # n3. Intenta imputar por mediana hístórica de la misma ubicación
+                    if pd.isna(impute_value):
+                        medianas_location = df.groupby('Location')[feature].median()
+                        impute_value = medianas_location.get(location)
                 
             if not pd.isna(impute_value):
                 if feature == 'Cloud3pm' or feature == 'Cloud9am':
@@ -460,11 +493,13 @@ def imputar_features(df, features, df_test=None):
 
 
 # %%
-train_imputed = imputar_features(train, variables_numericas)
+variables_a_imputar = variables_numericas + ['WindDir9am', 'WindDir3pm', 'WindGustDir']
+
+train_imputed = imputar_features(train, variables_a_imputar)
 
 # Muestra cuántos NaNs quedan después de la imputación
 print("\nConteo de NaNs después de la imputación")
-print(train_imputed[variables_numericas].isna().sum().sum())
+print(train_imputed[variables_a_imputar].isna().sum().sum())
 
 # %%
 import pandas as pd
@@ -544,7 +579,7 @@ plt.show()
 # Concluímos que la imputación fue buena, ya que las distribuciones se mantienen sin grandes alteraciones.
 
 # %%
-test = imputar_features(train, variables_numericas, test) # Imputar en test con los datos de train
+test = imputar_features(train, variables_a_imputar, test) # Imputar en test con los datos de train
 
 train = train_imputed
 
