@@ -1072,10 +1072,11 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# Las variables presentan una alta colinealidad, en general los días con mayor humedad presentan una mayor de proporción de casos en los que lovió al día siguiente, este comportamiento se mantiene en todos los tipos de clima. Vamos a quedarnos con *Humidity3pm* para reducir la multicolinealidad del módelo ya que presenta una influencia más marcada.
+# Las variables presentan una alta colinealidad, en general los días con mayor humedad presentan una mayor de proporción de casos en los que lovió al día siguiente, este comportamiento se mantiene en todos los tipos de clima. Vamos a quedarnos con *Humidity3pm* para reducir la multicolinealidad del módelo ya que presenta una influencia más marcada. Update: Nos quedamos con ambas ya que mejorá el desempeño del modelo.
 
 # %%
 predictoras.append('Humidity3pm')
+predictoras.append('Humidity9am')
 
 # %% [markdown]
 # ### Variables *Pressure9am* y *Pressure3pm*
@@ -1123,10 +1124,11 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# Idem variables de humedad. Nos quedamos con *Pressure3pm*
+# Idem variables de humedad. Nos quedamos con *Pressure3pm*. Update: Nos quedamos con ambas porque mejora el desempeño del modelo.
 
 # %%
 predictoras.append('Pressure3pm')
+predictoras.append('Pressure9am')
 
 # %% [markdown]
 # ### Variables *WindSpeed9am*, *WindSpeed3pm* y *WindGustSpeed*
