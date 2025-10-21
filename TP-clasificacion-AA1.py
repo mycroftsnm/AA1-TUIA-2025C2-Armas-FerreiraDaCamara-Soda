@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: .venv
 #     language: python
 #     name: python3
 # ---
@@ -24,6 +24,19 @@ import plotly.express as px
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    roc_curve,
+    confusion_matrix,
+    classification_report,
+)
+
+from imblearn.over_sampling import RandomOverSampler, SMOTE
+from imblearn.under_sampling import RandomUnderSampler
 
 # %%
 # Carga el dataset en un dataframe
@@ -576,6 +589,9 @@ train["RainTomorrow"].value_counts(normalize=True).round(2)
 # %%
 # Generamos una dummy para RainTomorrow
 train['RainTomorrow_dummy'] = np.where(train['RainTomorrow'] == 'Yes', 1, 0)
+
+test['RainTomorrow_dummy'] = np.where(test['RainTomorrow'] == 'Yes', 1, 0)
+
 
 # %% [markdown]
 # ### Variable *Date*
@@ -1191,6 +1207,17 @@ predictoras_continuas.remove('Cloud3pm')
 predictoras_continuas.remove('RainySeason')
 print(f"Variables a estandarizar: {predictoras_continuas}")
 
+# %% [markdown]
+# Vamos a escalar las features *Cloud9am* y *Cloud3pm*, que son variables númericas discretas, usando la técnica de MinMaxScaler
+
+# %%
+train['Cloud9am'] = train['Cloud9am'] / 8
+train['Cloud3pm'] = train['Cloud3pm'] / 8
+
+test['Cloud9am'] = test['Cloud9am'] / 8
+test['Cloud3pm'] = test['Cloud3pm'] / 8
+
+
 # %%
 scaler = StandardScaler()
 scaler.fit(train[predictoras_continuas])
@@ -1216,3 +1243,154 @@ predictoras.append('ClimateTropical')
 
 # %%
 print(f'Vamos a utilizar las siguientes variables para entrenar el modelo:\n{predictoras}')
+
+
+# %% [markdown]
+# # Modelado
+
+# %%
+def evaluar_modelo(y_true, y_pred, y_pred_proba, nombre_modelo):
+    """
+    Evalúa un modelo y retorna un diccionario con las métricas
+    """
+    resultados = {
+        'Modelo': nombre_modelo,
+        'Accuracy': accuracy_score(y_true, y_pred),
+        'Precision': classification_report(y_true, y_pred, output_dict=True)['1']['precision'],
+        'Recall': classification_report(y_true, y_pred, output_dict=True)['1']['recall'],
+        'F1-Score': f1_score(y_true, y_pred),
+        'ROC-AUC': roc_auc_score(y_true, y_pred_proba)
+    }
+    
+    return resultados
+
+def graficar_matriz_confusion(y_true, y_pred, titulo):
+    """
+    Grafica la matriz de confusión
+    """
+    cm = confusion_matrix(y_true, y_pred)
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+    ax.set_xlabel('Predicción')
+    ax.set_ylabel('Valor Real')
+    ax.set_title(f'Matriz de Confusión - {titulo}')
+    ax.set_xticklabels(['No llueve', 'Llueve'])
+    ax.set_yticklabels(['No llueve', 'Llueve'])
+    plt.tight_layout()
+    plt.show()
+
+
+# %%
+x_train = train[predictoras]
+y_train = train['RainTomorrow_dummy']
+
+x_test = test[predictoras]
+y_test = test['RainTomorrow_dummy']
+
+# %% [markdown]
+# ## Modelo 1: Regresión Logística (sin balanceo)
+
+# %%
+lr_base = LogisticRegression(max_iter=1000, random_state=42)
+lr_base.fit(x_train, y_train)
+
+y_pred_base = lr_base.predict(x_test)
+y_pred_proba_base = lr_base.predict_proba(x_test)[:, 1]
+
+resultados_base = evaluar_modelo(y_test, y_pred_base, y_pred_proba_base, 'Sin balanceo')
+
+print("\nReporte de clasificación:")
+print(classification_report(y_test, y_pred_base, target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, y_pred_base, 'Sin balanceo')
+
+# %% [markdown]
+# ## Modelo 2: Regresión Logística con balanceo de clase
+
+# %%
+lr_balanced = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
+lr_balanced.fit(x_train, y_train)
+
+y_pred_balanced = lr_balanced.predict(x_test)
+y_pred_proba_balanced = lr_balanced.predict_proba(x_test)[:, 1]
+
+resultados_balanced = evaluar_modelo(y_test, y_pred_balanced, y_pred_proba_balanced, 'Class Weight Balanced')
+
+print("\nReporte de clasificación:")
+print(classification_report(y_test, y_pred_balanced, target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, y_pred_balanced, 'Class Weight Balanced')
+
+# %% [markdown]
+# ## Modelo 3: Regresión Lógistica con SMOTE
+
+# %%
+# Aplicar SMOTE al conjunto de entrenamiento
+smote = SMOTE(random_state=42)
+x_train_smote, y_train_smote = smote.fit_resample(x_train, y_train)
+
+print(f"Distribución después de SMOTE:")
+print(pd.Series(y_train_smote).value_counts())
+
+lr_smote = LogisticRegression(max_iter=1000, random_state=42)
+lr_smote.fit(x_train_smote, y_train_smote)
+
+y_pred_smote = lr_smote.predict(x_test)
+y_pred_proba_smote = lr_smote.predict_proba(x_test)[:, 1]
+
+resultados_smote = evaluar_modelo(y_test, y_pred_smote, y_pred_proba_smote, 'SMOTE')
+
+print("\nReporte de clasificación:")
+print(classification_report(y_test, y_pred_smote, target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, y_pred_smote, 'SMOTE')
+
+# %% [markdown]
+# ## Modelo 4: Regresión Logística con Random Under-Samplig
+
+# %%
+# Aplicar Random Under-Sampling
+rus = RandomUnderSampler(random_state=42)
+X_train_rus, y_train_rus = rus.fit_resample(x_train, y_train)
+
+print(f"Distribución después de Under-Sampling:")
+print(pd.Series(y_train_rus).value_counts())
+
+lr_rus = LogisticRegression(max_iter=1000, random_state=42)
+lr_rus.fit(X_train_rus, y_train_rus)
+
+y_pred_rus = lr_rus.predict(x_test)
+y_pred_proba_rus = lr_rus.predict_proba(x_test)[:, 1]
+
+resultados_rus = evaluar_modelo(y_test, y_pred_rus, y_pred_proba_rus, 'Random Under-Sampling')
+
+print("\nReporte de clasificación:")
+print(classification_report(y_test, y_pred_rus, target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, y_pred_rus, 'Random Under-Sampling')
+
+
+# %% [markdown]
+# ## Modelo 5: Regresión Logística con Random Over-Sampling
+
+# %%
+# Aplicar Random Over-Sampling
+ros = RandomOverSampler(random_state=42)
+X_train_ros, y_train_ros = ros.fit_resample(x_train, y_train)
+
+print(f"Distribución después de Over-Sampling:")
+print(pd.Series(y_train_ros).value_counts())
+
+lr_ros = LogisticRegression(max_iter=1000, random_state=42)
+lr_ros.fit(X_train_ros, y_train_ros)
+
+y_pred_ros = lr_ros.predict(x_test)
+y_pred_proba_ros = lr_ros.predict_proba(x_test)[:, 1]
+
+resultados_ros = evaluar_modelo(y_test, y_pred_ros, y_pred_proba_ros, 'Random Over-Sampling')
+
+print("\nReporte de clasificación:")
+print(classification_report(y_test, y_pred_ros, target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, y_pred_ros, 'Random Over-Sampling')
