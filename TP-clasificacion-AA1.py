@@ -1220,13 +1220,68 @@ plt.show()
 # Idem variables de humedad y de temperatura. Nos quedamos con *WindGustSpeed*
 
 # %%
+predictoras.append('WindSpeed9am')
+predictoras.append('WindSpeed3pm')
 predictoras.append('WindGustSpeed')
+
+# %% [markdown]
+# ### Variables *WindDir9am*, *WindDir3pm* y *WindGustDir*
+
+# %%
+fig, axes = plt.subplots(3, 1, figsize=(16, 9))
+for i, var in enumerate(['WindDir9am', 'WindDir3pm', 'WindGustDir']):
+    sns.histplot(
+        data=train,
+        x=var,
+        hue='RainTomorrow',
+        palette='muted',
+        multiple='fill',
+        ax=axes[i]
+    )
+
+fig.suptitle("Distribución de WindDir9am, WindDir3pm y WindGustDir según RainTomorrow")
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# Estas variables son complejas ya que dependen de cada ubicación en particular, vamos a encodearlas cíclicamente usando seno y coseno.
+
+# %%
+dir_angulos = {
+    'N': 0.0, 'NNE': 22.5, 'NE': 45.0, 'ENE': 67.5, 'E': 90.0,
+    'ESE': 112.5, 'SE': 135.0, 'SSE': 157.5, 'S': 180.0, 'SSW': 202.5,
+    'SW': 225.0, 'WSW': 247.5, 'W': 270.0, 'WNW': 292.5, 'NW': 315.0,
+    'NNW': 337.5
+}
+
+def encodear_direccion_viento(df, var):
+    angulos = df[var].map(dir_angulos)
+    df[f'{var}_sin'] = np.sin(angulos * 2 * np.pi / 360)
+    df[f'{var}_cos'] = np.cos(angulos * 2 * np.pi / 360)
+
+    return df
+
+
+for var in ['WindDir9am', 'WindDir3pm', 'WindGustDir']:
+    train = encodear_direccion_viento(train, var)
+    test = encodear_direccion_viento(test, var)
+    predictoras.append(f'{var}_sin')
+    predictoras.append(f'{var}_cos')
 
 # %%
 
 fig, ax1 = plt.subplots(figsize=(16, 9))
 
-matriz_correlacion = train[predictoras].corr()
+predictoras_a_graficar = predictoras.copy()
+predictoras_a_graficar.remove('WindGustDir_sin')
+predictoras_a_graficar.remove('WindGustDir_cos')
+predictoras_a_graficar.remove('WindDir9am_sin')
+predictoras_a_graficar.remove('WindDir9am_cos')
+predictoras_a_graficar.remove('WindDir3pm_sin')
+predictoras_a_graficar.remove('WindDir3pm_cos')
+
+matriz_correlacion = train[predictoras_a_graficar].corr()
 mascara = np.triu(np.ones_like(matriz_correlacion, dtype=bool))
 
 sns.heatmap(data=matriz_correlacion, ax=ax1, annot=True, vmin=-1, vmax=1, mask=mascara)
