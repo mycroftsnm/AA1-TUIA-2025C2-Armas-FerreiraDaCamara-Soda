@@ -418,11 +418,16 @@ def imputar_features(df, features, df_test=None):
     for feature in features:
         total_imputados = 0
 
-        df_indexed = df.set_index(['Date', 'Location'])
-        
-        nan_rows = imputed_df[imputed_df[feature].isna()]
-                
         variables_direccion_viento = ['WindDir9am', 'WindDir3pm', 'WindGustDir']
+        
+        df_indexed = df.set_index(['Date', 'Location'])
+        if feature not in variables_direccion_viento:
+            media_climate_day = df.groupby(['Climate','Date'])[feature].mean()
+            medianas_location = df.groupby('Location')[feature].median()
+            media_climate = df.groupby(['Climate'])[feature].mean()
+        
+                
+        nan_rows = imputed_df[imputed_df[feature].isna()]
 
         for index, row in nan_rows.iterrows():
             
@@ -472,13 +477,15 @@ def imputar_features(df, features, df_test=None):
                 else: # Numéricas
                         
                     # n2. Intenta imputar por media del día del mismo tipo de clima
-                    media_climate_day = df.groupby(['Climate','Date'])[feature].mean()
                     impute_value = media_climate_day.get((climate, date))
                     
-                    # n3. Intenta imputar por mediana hístórica de la misma ubicación
                     if pd.isna(impute_value):
-                        medianas_location = df.groupby('Location')[feature].median()
+                        # n3. Intenta imputar por mediana hístórica de la misma ubicación
                         impute_value = medianas_location.get(location)
+
+                    if pd.isna(impute_value):
+                        # n4. Intenta imputar por media histórica del mismo tipo de clim
+                        impute_value = media_climate.get(climate)
                 
             if not pd.isna(impute_value):
                 if feature == 'Cloud3pm' or feature == 'Cloud9am':
@@ -490,7 +497,6 @@ def imputar_features(df, features, df_test=None):
         print(f'Se imputaron {total_imputados} para la feature {feature}')
 
     return imputed_df
-
 
 # %%
 variables_a_imputar = variables_numericas + ['WindDir9am', 'WindDir3pm', 'WindGustDir']
