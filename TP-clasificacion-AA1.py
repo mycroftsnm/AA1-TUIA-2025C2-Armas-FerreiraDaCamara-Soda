@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: .venv
+#     display_name: aa1-tuia-2025c2-armas-ferreiradacamara-soda
 #     language: python
 #     name: python3
 # ---
@@ -33,6 +33,7 @@ from sklearn.metrics import (
     roc_curve,
     confusion_matrix,
     classification_report,
+    precision_recall_curve
 )
 
 from imblearn.over_sampling import RandomOverSampler, SMOTE
@@ -1492,3 +1493,417 @@ print("\nReporte de clasificación:")
 print(classification_report(y_test, y_pred_ros, target_names=['No llueve', 'Llueve']))
 
 graficar_matriz_confusion(y_test, y_pred_ros, 'Random Over-Sampling')
+
+# %%
+# Crear DataFrame con todos los resultados
+df_resultados = pd.DataFrame([
+    resultados_base,
+    resultados_balanced,
+    resultados_smote,
+    resultados_rus,
+    resultados_ros
+])
+
+print("\nCOMPARACIÓN DE MODELOS")
+print(df_resultados.to_string(index=False))
+
+
+# %%
+fig, axes = plt.subplots(5, 1, figsize=(16, 18))
+
+metricas = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC-AUC']
+
+for idx, metrica in enumerate(metricas):
+    ax = axes[idx]
+    sns.barplot(data=df_resultados, hue='Modelo', x='Modelo', y=metrica, palette='muted', ax=ax)
+    ax.set_title(f'{metrica}', fontsize=14, fontweight='bold')
+    ax.set_xlabel('')
+    ax.set_ylabel(metrica, fontsize=12)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel('')
+    # Agregar valores sobre las barras
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.3f', padding=3)
+
+
+fig.suptitle('Comparación de Métricas por Modelo', fontsize=16) 
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ## Curvas ROC
+
+# %%
+fig, ax = plt.subplots(figsize=(12, 8))
+
+modelos_predicciones = [
+    ('Sin balanceo', y_pred_proba_base),
+    ('Class Weight Balanced', y_pred_proba_balanced),
+    ('SMOTE', y_pred_proba_smote),
+    ('Random Under-Sampling', y_pred_proba_rus),
+    ('Random Over-Sampling', y_pred_proba_ros)
+]
+
+for nombre, y_pred_proba in modelos_predicciones:
+    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+    auc = roc_auc_score(y_test, y_pred_proba)
+    ax.plot(fpr, tpr, label=f'{nombre} (AUC = {auc:.3f})', linewidth=2)
+
+ax.plot([0, 1], [0, 1], 'k--', label='Clasificador Aleatorio', linewidth=2)
+ax.set_xlabel('Tasa de Falsos Positivos (FPR)', fontsize=12)
+ax.set_ylabel('Tasa de Verdaderos Positivos (TPR)', fontsize=12)
+ax.set_title('Curvas ROC - Comparación de Modelos', fontsize=14, fontweight='bold')
+ax.legend(loc='lower right', fontsize=10)
+ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ## Curvas Precision vs Recall
+
+# %%
+fig, ax = plt.subplots(figsize=(12, 8))
+
+for nombre, y_pred_proba in modelos_predicciones:
+    precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
+    ax.plot(recall, precision, label=nombre, linewidth=2)
+
+ax.set_xlabel('Recall', fontsize=12)
+ax.set_ylabel('Precision', fontsize=12)
+ax.set_title('Curvas Precision-Recall - Comparación de Modelos', fontsize=14, fontweight='bold')
+ax.legend(loc='upper right', fontsize=10)
+ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+# Selecciona el mejor modelo según F1-Score
+mejor_modelo_idx = df_resultados['F1-Score'].idxmax()
+mejor_modelo_nombre = df_resultados.loc[mejor_modelo_idx, 'Modelo']
+
+print(f"\nMejor modelo según F1-Score: {mejor_modelo_nombre}")
+
+# Obtener coeficientes del mejor modelo
+if mejor_modelo_nombre == 'Sin balanceo':
+    modelo = lr_base
+elif mejor_modelo_nombre == 'Class Weight Balanced':
+    modelo = lr_balanced
+elif mejor_modelo_nombre == 'SMOTE':
+    modelo = lr_smote
+elif mejor_modelo_nombre == 'Random Under-Sampling':
+    modelo = lr_rus
+else:# mejor_modelo_nombre == 'Random Over-Sampling':
+    modelo = lr_ros
+
+# %%
+# importancia de features
+coeficientes = pd.DataFrame({
+    'Feature': x_train.columns,
+    'Coeficiente': modelo.coef_[0]
+})
+coeficientes['Abs_Coeficiente'] = np.abs(coeficientes['Coeficiente'])
+coeficientes = coeficientes.sort_values('Abs_Coeficiente', ascending=False)
+
+fig, ax = plt.subplots(figsize=(12, 8))
+colores_barras = ['green' if x > 0 else 'red' for x in coeficientes['Coeficiente']]
+ax.barh(coeficientes['Feature'], coeficientes['Coeficiente'], color=colores_barras, alpha=0.7)
+ax.set_xlabel('Coeficiente', fontsize=12)
+ax.set_ylabel('Feature', fontsize=12)
+ax.set_title(f'Importancia de Features - {mejor_modelo_nombre}', fontsize=14, fontweight='bold')
+ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+ax.grid(axis='x', alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+print("\nTop 10 features más importantes:")
+print(coeficientes.head(10).to_string(index=False))
+
+
+# %% [markdown]
+# ## Optimización de Umbral de Decisión
+
+# %%
+def encontrar_umbral_optimo(y_true, y_pred_proba, metrica='f1'):
+    """
+    Encuentra el umbral óptimo según la métrica especificada
+    
+    Parámetros:
+    - metrica: 'f1' o 'youden'
+        - 'f1': Optimiza F1-Score (balance entre precision y recall)
+        - 'youden': Optimiza índice de Youden (sensitivity + specificity - 1)
+    """
+    umbrales = np.linspace(0.01, 0.99, 99)  # Evitamos extremos 0 y 1
+    scores = []
+    
+    for umbral in umbrales:
+        y_pred = (y_pred_proba >= umbral).astype(int)
+        
+        # Verificar que tengamos ambas clases predichas
+        if len(np.unique(y_pred)) < 2:
+            scores.append(0)
+            continue
+        
+        if metrica == 'f1':
+            score = f1_score(y_true, y_pred, zero_division=0)
+            
+        elif metrica == 'youden':
+            tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+            sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+            specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+            score = sensitivity + specificity - 1  # Índice de Youden
+            
+        else:
+            raise ValueError("Métrica no reconocida. Usa: 'f1' o 'youden'")
+        
+        scores.append(score)
+    
+    idx_optimo = np.argmax(scores)
+    return umbrales[idx_optimo], scores[idx_optimo], umbrales, scores
+
+
+def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
+    """
+    Grafica cómo varían las métricas según el umbral
+    """
+    umbrales = np.linspace(0.01, 0.99, 99)
+    f1_scores = []
+    precision_scores = []
+    recall_scores = []
+    youden_scores = []
+    
+    for umbral in umbrales:
+        y_pred = (y_pred_proba >= umbral).astype(int)
+        
+        # Verificar que tengamos ambas clases
+        if len(np.unique(y_pred)) < 2:
+            f1_scores.append(0)
+            precision_scores.append(0)
+            recall_scores.append(0)
+            youden_scores.append(0)
+            continue
+        
+        f1_scores.append(f1_score(y_true, y_pred, zero_division=0))
+        report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+        precision_scores.append(report['1']['precision'])
+        recall_scores.append(report['1']['recall'])
+        
+        # Calcula Youden
+        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        youden_scores.append(sensitivity + specificity - 1)
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    # Plotear métricas
+    ax.plot(umbrales, f1_scores, label='F1-Score', linewidth=2.5, color='#2E86AB')
+    ax.plot(umbrales, precision_scores, label='Precision', linewidth=2, 
+            alpha=0.7, color='#A23B72', linestyle='--')
+    ax.plot(umbrales, recall_scores, label='Recall', linewidth=2, 
+            alpha=0.7, color='#F18F01', linestyle='--')
+    ax.plot(umbrales, youden_scores, label='Youden Index', linewidth=2.5, 
+            color='#06A77D', linestyle='-.')
+    
+    # Marca umbrales óptimos
+    idx_f1_max = np.argmax(f1_scores)
+    idx_youden_max = np.argmax(youden_scores)
+    
+    ax.axvline(umbrales[idx_f1_max], color='#2E86AB', linestyle=':', alpha=0.6, linewidth=2,
+               label=f'Óptimo F1 = {umbrales[idx_f1_max]:.2f}')
+    ax.axvline(umbrales[idx_youden_max], color='#06A77D', linestyle=':', alpha=0.6, linewidth=2,
+               label=f'Óptimo Youden = {umbrales[idx_youden_max]:.2f}')
+    
+    # Marca umbral 0.5 por defecto
+    ax.axvline(0.5, color='red', linestyle='--', alpha=0.4, linewidth=1.5,
+               label='Umbral por defecto (0.5)')
+    
+    ax.set_xlabel('Umbral de Decisión', fontsize=13, fontweight='bold')
+    ax.set_ylabel('Score', fontsize=13, fontweight='bold')
+    ax.set_title(f'Métricas vs Umbral - {nombre_modelo}', 
+                 fontsize=15, fontweight='bold', pad=15)
+    ax.legend(loc='best', fontsize=11, framealpha=0.9)
+    ax.grid(alpha=0.3, linestyle='--')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.05)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return umbrales[idx_f1_max], umbrales[idx_youden_max]
+
+
+# %% [markdown]
+# ### Análisis de umbrales para cada modelo
+
+# %%
+# Diccionarios para almacenar umbrales óptimos
+umbrales_optimos_f1 = {}
+umbrales_optimos_youden = {}
+
+modelos_info = [
+    ('Sin balanceo', y_pred_proba_base, lr_base),
+    ('Class Weight Balanced', y_pred_proba_balanced, lr_balanced),
+    ('SMOTE', y_pred_proba_smote, lr_smote),
+    ('Random Under-Sampling', y_pred_proba_rus, lr_rus),
+    ('Random Over-Sampling', y_pred_proba_ros, lr_ros)
+]
+
+print("=" * 80)
+print("OPTIMIZACIÓN DE UMBRALES")
+print("=" * 80)
+
+for nombre, y_pred_proba, modelo in modelos_info:
+    print(f"\n{'='*70}")
+    print(f"Modelo: {nombre}")
+    print('='*70)
+    
+    # Encuentra umbral óptimo para F1
+    umbral_f1, score_f1, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'f1')
+    
+    # Encuentra umbral óptimo para Youden
+    umbral_youden, score_youden, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'youden')
+    
+    print(f"\n📊 UMBRALES ÓPTIMOS:")
+    print(f"   • Umbral por defecto:    0.500")
+    print(f"   • Umbral óptimo F1:      {umbral_f1:.3f}  (F1 = {score_f1:.3f})")
+    print(f"   • Umbral óptimo Youden:  {umbral_youden:.3f}  (J = {score_youden:.3f})")
+    
+    # Guarda los umbrales óptimos
+    umbrales_optimos_f1[nombre] = umbral_f1
+    umbrales_optimos_youden[nombre] = umbral_youden
+    
+    # Grafica métricas vs umbral
+    graficar_metricas_por_umbral(y_test, y_pred_proba, nombre)
+    
+    # Compara resultados con umbral 0.5 vs óptimos
+    y_pred_05 = (y_pred_proba >= 0.5).astype(int)
+    y_pred_opt_f1 = (y_pred_proba >= umbral_f1).astype(int)
+    y_pred_opt_youden = (y_pred_proba >= umbral_youden).astype(int)
+    
+    print(f"\n{'─'*70}")
+    print(f"COMPARACIÓN DE MÉTRICAS")
+    print(f"{'─'*70}")
+    
+    print("\n▶ Con umbral por defecto (0.5):")
+    print(classification_report(y_test, y_pred_05, target_names=['No llueve', 'Llueve']))
+    
+    print(f"\n▶ Con umbral óptimo F1 ({umbral_f1:.3f}):")
+    print(classification_report(y_test, y_pred_opt_f1, target_names=['No llueve', 'Llueve']))
+    
+    print(f"\n▶ Con umbral óptimo Youden ({umbral_youden:.3f}):")
+    print(classification_report(y_test, y_pred_opt_youden, target_names=['No llueve', 'Llueve']))
+
+# %% [markdown]
+#  ### Comparación final con umbrales optimizados
+
+# %%
+# Recalcula métricas con umbrales optimizados para F1
+resultados_opt_f1 = []
+
+for nombre, y_pred_proba, modelo in modelos_info:
+    umbral_opt = umbrales_optimos_f1[nombre]
+    y_pred_opt = (y_pred_proba >= umbral_opt).astype(int)
+    
+    resultados = {
+        'Modelo': nombre,
+        'Umbral': umbral_opt,
+        'Accuracy': accuracy_score(y_test, y_pred_opt),
+        'Precision': classification_report(y_test, y_pred_opt, output_dict=True)['1']['precision'],
+        'Recall': classification_report(y_test, y_pred_opt, output_dict=True)['1']['recall'],
+        'F1-Score': f1_score(y_test, y_pred_opt),
+        'ROC-AUC': roc_auc_score(y_test, y_pred_proba)
+    }
+    resultados_opt_f1.append(resultados)
+
+df_resultados_opt_f1 = pd.DataFrame(resultados_opt_f1)
+
+# Recalcula métricas con umbrales optimizados para Youden
+resultados_opt_youden = []
+
+for nombre, y_pred_proba, modelo in modelos_info:
+    umbral_opt = umbrales_optimos_youden[nombre]
+    y_pred_opt = (y_pred_proba >= umbral_opt).astype(int)
+    
+    resultados = {
+        'Modelo': nombre,
+        'Umbral': umbral_opt,
+        'Accuracy': accuracy_score(y_test, y_pred_opt),
+        'Precision': classification_report(y_test, y_pred_opt, output_dict=True)['1']['precision'],
+        'Recall': classification_report(y_test, y_pred_opt, output_dict=True)['1']['recall'],
+        'F1-Score': f1_score(y_test, y_pred_opt),
+        'ROC-AUC': roc_auc_score(y_test, y_pred_proba)
+    }
+    resultados_opt_youden.append(resultados)
+
+df_resultados_opt_youden = pd.DataFrame(resultados_opt_youden)
+
+print("\n" + "=" * 100)
+print("RESULTADOS CON UMBRAL ÓPTIMO F1")
+print("=" * 100)
+print(df_resultados_opt_f1.to_string(index=False))
+
+print("\n" + "=" * 100)
+print("RESULTADOS CON UMBRAL ÓPTIMO YOUDEN")
+print("=" * 100)
+print(df_resultados_opt_youden.to_string(index=False))
+
+# %%
+# Comparación lado a lado: umbral 0.5 vs F1 vs Youden
+df_05 = df_resultados.copy()
+df_05['Tipo'] = 'Umbral 0.5'
+
+df_f1 = df_resultados_opt_f1.drop('Umbral', axis=1).copy()
+df_f1['Tipo'] = 'Óptimo F1'
+
+df_youden = df_resultados_opt_youden.drop('Umbral', axis=1).copy()
+df_youden['Tipo'] = 'Óptimo Youden'
+
+df_combinado = pd.concat([df_05, df_f1, df_youden], ignore_index=True)
+
+
+# %%
+# Visualización comparativa
+fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+
+metricas_comparar = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+colores = ['#E8E8E8', '#2E86AB', '#06A77D']
+
+for idx, metrica in enumerate(metricas_comparar):
+    ax = axes[idx // 2, idx % 2]
+    
+    sns.barplot(data=df_combinado, x='Modelo', y=metrica, hue='Tipo', 
+                palette=colores, ax=ax)
+    
+    ax.set_title(f'{metrica}', fontsize=15, fontweight='bold', pad=10)
+    ax.set_xlabel('')
+    ax.set_ylabel(metrica, fontsize=13)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', fontsize=11)
+    ax.set_ylim(0, 1)
+    ax.legend(title='', fontsize=11, framealpha=0.9)
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+
+fig.suptitle('Comparación: Umbral 0.5 vs Óptimo F1 vs Óptimo Youden', 
+             fontsize=17, fontweight='bold', y=1.00)
+plt.tight_layout()
+plt.show()
+
+# %%
+print("\n" + "=" * 80)
+print("RESUMEN DE UMBRALES ÓPTIMOS POR MODELO")
+print("=" * 80)
+
+resumen_umbrales = pd.DataFrame({
+    'Modelo': [nombre for nombre, _, _ in modelos_info],
+    'Umbral F1': [umbrales_optimos_f1[nombre] for nombre, _, _ in modelos_info],
+    'Umbral Youden': [umbrales_optimos_youden[nombre] for nombre, _, _ in modelos_info],
+    'Diferencia': [abs(umbrales_optimos_f1[nombre] - umbrales_optimos_youden[nombre]) 
+                   for nombre, _, _ in modelos_info]
+})
+
+print(resumen_umbrales.to_string(index=False))
+
+# %% [markdown]
+# Para optimizar el umbral de clasificación, investigamos el índice J de Youden. Esta métrica, al igual F1-Score en su objetivo de encontrar un umbral óptimo, se enfoca específicamente en maximizar el equilibrio entre la Sensibilidad (Recall) y la Especificidad. El umbral resultante es aquel que maximiza la fórmula $(Sensibilidad + Especificidad - 1)$, identificando así el punto de corte que ofrece el mejor balance. Esto nos permitió lograr un notable Recall (alta detección de positivos) sin sacrificar de manera desproporcionada la Especificidad (la correcta detección de negativos).
