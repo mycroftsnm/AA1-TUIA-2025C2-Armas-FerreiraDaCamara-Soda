@@ -1507,7 +1507,6 @@ df_resultados = pd.DataFrame([
 print("\nCOMPARACIÓN DE MODELOS")
 print(df_resultados.to_string(index=False))
 
-
 # %%
 fig, axes = plt.subplots(5, 1, figsize=(16, 18))
 
@@ -1766,7 +1765,7 @@ for nombre, y_pred_proba, modelo in modelos_info:
     # Encuentra umbral óptimo para Youden
     umbral_youden, score_youden, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'youden')
     
-    print(f"\n📊 UMBRALES ÓPTIMOS:")
+    print(f"\nUMBRALES ÓPTIMOS:")
     print(f"   • Umbral por defecto:    0.500")
     print(f"   • Umbral óptimo F1:      {umbral_f1:.3f}  (F1 = {score_f1:.3f})")
     print(f"   • Umbral óptimo Youden:  {umbral_youden:.3f}  (J = {score_youden:.3f})")
@@ -1905,5 +1904,32 @@ resumen_umbrales = pd.DataFrame({
 
 print(resumen_umbrales.to_string(index=False))
 
+
 # %% [markdown]
 # Para optimizar el umbral de clasificación, investigamos el índice J de Youden. Esta métrica, al igual F1-Score en su objetivo de encontrar un umbral óptimo, se enfoca específicamente en maximizar el equilibrio entre la Sensibilidad (Recall) y la Especificidad. El umbral resultante es aquel que maximiza la fórmula $(Sensibilidad + Especificidad - 1)$, identificando así el punto de corte que ofrece el mejor balance. Esto nos permitió lograr un notable Recall (alta detección de positivos) sin sacrificar de manera desproporcionada la Especificidad (la correcta detección de negativos).
+
+# %% [markdown]
+# # MLOPS
+
+# %% [markdown]
+# ## Modelo Base
+
+# %%
+def modelo_base_rainfall(rainfall):
+    aleatorios = np.random.rand(len(rainfall))
+    P = 1 / (1 + np.exp(-rainfall))
+    predicciones = np.where(P > 0.5, 1, 0)
+    return (pd.Series(predicciones), pd.Series(P))
+
+
+# %%
+y_pred_base_rainfall, y_pred_base_rainfall_prob = modelo_base_rainfall(x_test['Rainfall_log'])
+
+resultados_base_rainfall = evaluar_modelo(y_test, y_pred_base_rainfall, y_pred_base_rainfall_prob, 'Modelo Base Rainfall')
+
+print(resultados_base_rainfall)
+
+print("\nReporte de clasificación:")
+print(classification_report(y_test, y_pred_base_rainfall, target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, y_pred_base_rainfall, 'Modelo Base Rainfall')
