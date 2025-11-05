@@ -1933,3 +1933,279 @@ print("\nReporte de clasificación:")
 print(classification_report(y_test, y_pred_base_rainfall, target_names=['No llueve', 'Llueve']))
 
 graficar_matriz_confusion(y_test, y_pred_base_rainfall, 'Modelo Base Rainfall')
+
+# %% [markdown]
+# ### SHAP
+# Vamos a aplicar al modelo balanceado con random_oversampling, esto es porque fue el que obtuvimos el mejor umbral en la clase `llueve` de la variable target, optimizando el umbral con **Youden**.
+
+# %% [markdown]
+# ### Interpretación local
+
+# %%
+# comenzamos creando el objeto explainer SHAP
+
+explainer = shap.LinearExplainer(lr_ros, X_train_ros, feature_names=predictoras)
+
+# %%
+shap_values = explainer.shap_values(x_test)
+
+# %% [markdown]
+# #### Force Plot (gráfico de fuerza)
+
+# %%
+# elegimos una observación cualquiera
+# index = 3213 
+index = 3219 
+# index = 13003
+
+
+# Force plot para la observación elegida
+shap.force_plot(explainer.expected_value, 
+                shap_values[index],
+                x_test.iloc[index], 
+                feature_names=predictoras,
+                matplotlib=True, 
+                figsize=(18, 4), 
+                text_rotation=45)
+
+
+# información de la observación
+print(f"INFORMACIÓN DE LA OBSERVACIÓN {index}")
+print(f"Valor real: {'Llueve' if y_test.iloc[index] == 1 else 'No llueve'}")
+print(f"Probabilidad predicha: {y_pred_proba_ros[index]:.4f}")
+print(f"Predicción (umbral 0.5): {'Llueve' if y_pred_ros[index] == 1 else 'No llueve'}")
+
+# umbral optimizado Youden
+umbral_opt = umbrales_optimos_youden['Random Over-Sampling']
+pred_opt = 1 if y_pred_proba_ros[index] >= umbral_opt else 0
+print(f"Predicción (umbral optimizado con Youden {umbral_opt:.3f}): {'Llueve' if pred_opt == 1 else 'No llueve'}")
+
+# %% [markdown]
+# Del gráfico de fuerza notamos que el valor base es la clase mayoritaria "No llueve". En este caso en particular nos encontramos que predice con una probabilidad de 0.7756 que llueve con ambos umbrales, sin optimizar y optimizado con Youden.
+
+# %% [markdown]
+# En el gráfico SHAP se observa `f(x) = 1.24`. Este valor está en escala logit (log-odds).
+# Probabilidad = 0.7756 es la probabilidad transformada usando la función sigmoide, el valor que se obtiene con y_pred_proba_ros[index].
+#
+# Ambos valores representan lo mismo pero en distintas escalas.
+
+# %% [markdown]
+# #### Waterfall plot
+
+# %%
+index = 3219 
+
+# Crea el objeto Explanation
+explanation = shap.Explanation(values=shap_values[index],
+                               base_values=explainer.expected_value,
+                               data=x_test.iloc[index].values,
+                               feature_names=predictoras)
+
+# Visualiza el waterfall plot
+shap.plots.waterfall(explanation)
+
+# Información adicional
+
+print(f"ANÁLISIS DE LA OBSERVACIÓN {index}")
+
+print(f"Valor base (E[f(X)]): {explainer.expected_value:.4f}")
+print(f"Predicción final f(x): {explainer.expected_value + shap_values[index].sum():.4f}")
+print(f"Probabilidad predicha: {y_pred_proba_ros[index]:.4f}")
+print(f"Valor real: {'Llueve' if y_test.iloc[index] == 1 else 'No llueve'}")
+print(f"Predicción (umbral óptimo {umbrales_optimos_youden['Random Over-Sampling']:.3f}): {'Llueve' if (y_pred_proba_ros[index] >= umbrales_optimos_youden['Random Over-Sampling']) else 'No llueve'}")
+
+# %% [markdown]
+# La información es la misma, sin embargo, con el gráfico de Waterfall podemos distinguir mejor la influencia de cada una de las variables. 
+# De la observación elegida (3219), el gráfico waterfall muestra cómo el modelo construye la predicción.
+# Acá notamos más como las variables atmosféricas de presión y humedad son las más determinantes.
+
+# %% [markdown]
+# #### Observación de casos particulares.
+# A continuación observaremos casos extremos. Los FP y TP que dieron más confianza (probabilidad más alta en la predicción), y el valor más cercano al umbral.
+
+# %%
+# Encuentra las predicciones más confiantes (correctas e incorrectas)
+y_pred_opt_ros = (y_pred_proba_ros >= umbrales_optimos_youden['Random Over-Sampling']).astype(int)
+
+print("CASOS MÁS INTERESANTES PARA ANALIZAR")
+
+# Predicciones más confiantes de "Llueve" que son correctas
+tp_probs = y_pred_proba_ros[(y_pred_opt_ros == 1) & (y_test == 1)]
+if len(tp_probs) > 0:
+    idx_tp_max = np.where((y_pred_opt_ros == 1) & (y_test == 1))[0][np.argmax(tp_probs)]
+    print(f"\n1. TP más confiante (índice {idx_tp_max}): prob = {y_pred_proba_ros[idx_tp_max]:.4f}")
+
+# Predicciones más confiantes de "Llueve" que son incorrectas (Falsos Positivos)
+fp_probs = y_pred_proba_ros[(y_pred_opt_ros == 1) & (y_test == 0)]
+if len(fp_probs) > 0:
+    idx_fp_max = np.where((y_pred_opt_ros == 1) & (y_test == 0))[0][np.argmax(fp_probs)]
+    print(f"2. FP más confiante (índice {idx_fp_max}): prob = {y_pred_proba_ros[idx_fp_max]:.4f}")
+
+# Predicciones cercanas al umbral (casos dudosos)
+umbral = umbrales_optimos_youden['Random Over-Sampling']
+diff_umbral = np.abs(y_pred_proba_ros - umbral)
+idx_cercano = np.argmin(diff_umbral)
+print(f"3. Predicción más cercana al umbral (índice {idx_cercano}): prob = {y_pred_proba_ros[idx_cercano]:.4f}")
+
+# Visualiza estos casos interesantes
+casos_especiales = [idx_tp_max if len(tp_probs) > 0 else None,
+                   idx_fp_max if len(fp_probs) > 0 else None,
+                   idx_cercano]
+
+for i, idx in enumerate(casos_especiales, 1):
+    if idx is not None:
+        explanation = shap.Explanation(values=shap_values[idx],
+                                       base_values=explainer.expected_value,
+                                       data=x_test.iloc[idx].values,
+                                       feature_names=predictoras)
+        
+        fig = plt.figure(figsize=(10, 8))
+        shap.plots.waterfall(explanation, show=False)
+        plt.title(f'Caso Especial {i} - Observación {idx}', 
+                  fontsize=14, fontweight='bold', pad=20)
+        plt.tight_layout()
+        plt.show()
+
+# %% [markdown]
+# ### Interpretación global
+# Ahora continuamos con el escrutinio global de la influencia de las variables en las predicciones del modelo.
+
+# %%
+# Crear explanation global con todas las observaciones
+explanation_global = shap.Explanation(values=shap_values, 
+                                     base_values=explainer.expected_value, 
+                                     feature_names=predictoras, 
+                                     data=x_test)
+
+print(f"Explanation creada con {explanation_global.shape[0]} observaciones y {explanation_global.shape[1]} features")
+
+# %%
+# Bar plot: importancia promedio absoluta de cada feature
+print("IMPORTANCIA GLOBAL DE FEATURES (Mean Absolute SHAP)")
+
+shap.plots.bar(explanation_global, max_display=15, show=False)
+plt.title('Importancia Global de Features - Random Over-Sampling', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# #### Importancia Global
+#
+# En este gráfico de barras, podemos observar el **impacto promedio absoluto** de cada feature en las predicciones del modelo Random Over-Sampling.
+#
+# **Variables más influyentes:**
+#
+# 1. **Pressure3pm** (+1.14)
+# 2. **Humidity3pm** (+0.97)
+# 3. **Pressure9am** (+0.85) 
+#
+# - Las variables meteorológicas de la **tarde** (3pm) son más determinantes que las de la mañana.
+# - Las **condiciones atmosféricas** (presión, humedad) son más importantes que la lluvia del día actual.
+# - Variables como clima tropical, dirección del viento y diferencia de temperatura tienen un impacto mínimo.
+#
+# El modelo se basa principalmente en presión y humedad para predecir si lloverá mañana, lo cual tiene sentido meteorológicamente.
+
+# %%
+# Beeswarm plot: muestra distribución completa de SHAP values
+print("DISTRIBUCIÓN DE SHAP VALUES POR FEATURE")
+
+shap.plots.beeswarm(explanation_global, max_display=15, show=False)
+plt.title('Beeswarm Plot - Distribución de Impacto de Features', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ``Ayuda memoria: si la feature tiene un valor rojo (alto) hacia la izquierda, quiere decir que mientras más aumente el valor de la variable, menos probabilidades hay de que llueva. ``
+
+# %% [markdown]
+# El Beeswarm plot revela que Pressure3pm, Humidity3pm y Pressure9am son los features con mayor dispersión de valores SHAP, indicando su rol dominante en las predicciones. Notablemente, Pressure3pm muestra una clara polarización: valores bajos del feature (azul) generan impactos negativos en la predicción, mientras valores altos (rojo) aumentan fuertemente la probabilidad de lluvia, con algunos casos extremos superando +6 de SHAP value.
+
+# %%
+# Cohortes según si el modelo acertó o no
+y_pred_opt_ros = (y_pred_proba_ros >= umbrales_optimos_youden['Random Over-Sampling']).astype(int)
+aciertos = (y_pred_opt_ros == y_test.values).astype(int)
+
+aux_aciertos = [
+    "Predicción Correcta" if aciertos[i] == 1 else "Predicción Incorrecta"
+    for i in range(len(aciertos))
+]
+
+
+print("COHORTES POR ACIERTO DEL MODELO")
+
+shap.plots.bar(explanation_global.cohorts(aux_aciertos).abs.mean(0), show=False)
+plt.title('Importancia de Features según Acierto del Modelo', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+print(f"Predicciones Correctas: {aux_aciertos.count('Predicción Correcta')}")
+print(f"Predicciones Incorrectas: {aux_aciertos.count('Predicción Incorrecta')}")
+
+# detalle de predicciones correctas y no correctas (tp, tn, fp y fn)
+tp = np.sum((y_pred_opt_ros == 1) & (y_test == 1))
+tn = np.sum((y_pred_opt_ros == 0) & (y_test == 0))
+fp = np.sum((y_pred_opt_ros == 1) & (y_test == 0))
+fn = np.sum((y_pred_opt_ros == 0) & (y_test == 1))
+
+print(f"\nDesglose:")
+print(f"Verdaderos Positivos: {tp}")
+print(f"Verdaderos Negativos: {tn}")
+print(f"Falsos Positivos: {fp}")
+print(f"Falsos Negativos: {fn}")
+
+# %% [markdown]
+# Se observa del gráfico de cohortes por acierto del modelo que Humidity3pm presenta la mayor diferencia entre predicciones correctas e incorrectas. Cuando el modelo predice correctamente, Humidity3pm tiene mayor importancia SHAP (1.02) comparado con predicciones incorrectas (0.76), sugiriendo que niveles de humedad bien caracterizados son clave para el buen desempeño del modelo.
+#
+# Pressure3pm mantiene consistentemente la mayor importancia SHAP tanto en predicciones correctas (1.14) como incorrectas (1.12), indicando que es el feature más relevante independientemente del desempeño del modelo. En contraste y en relación a lo anteriormente mencionado, Humidity3pm muestra mayor variabilidad (1.02 vs 0.76), siendo más determinante en aciertos que en errores.
+
+# %%
+# evaluamos según la media de MinTemp
+mediana_variable = x_test['MinTemp'].median()
+
+aux_cohorte = [
+    "Alta MinTemp" if x_test['MinTemp'].iloc[i] >= mediana_variable else "Baja MinTemp"
+    for i in range(len(x_test))
+]
+
+print("COHORTES SEGÚN MEDIANA DE MinTemp")
+
+shap.plots.bar(explanation_global.cohorts(aux_cohorte).abs.mean(0), show=False)
+plt.title('Importancia de Features según nivel de MinTemp', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# Estadísticas descriptivas
+n_alta = aux_cohorte.count("Alta MinTemp")
+n_baja = aux_cohorte.count("Baja MinTemp")
+print(f"Casos con MinTemp ≥ mediana: {n_alta}")
+print(f"Casos con MinTemp < mediana: {n_baja}")
+
+print(f"\nMediana general de MinTemp: {mediana_variable:.2f}")
+print(f"Mediana grupo alto: {x_test.loc[x_test['MinTemp'] >= mediana_variable, 'MinTemp'].mean():.2f}")
+print(f"Mediana grupo bajo: {x_test.loc[x_test['MinTemp'] < mediana_variable, 'MinTemp'].mean():.2f}")
+
+# %% [markdown]
+# Se eligió MinTemp arbitrariamente para observar el comportamiento en relación al resto de variables
+#
+# Se **observa** del gráfico de cohortes que MinTemp y Pressure9am tienen una interacción interesante al separar con criterio de mediana:
+# Cuando MinTemp es baja (rayado), Pressure9am tiene mayor importancia SHAP (1.01) comparado con cuando MinTemp es alta (sólido), 0.70. Esto sugiere que la presión atmosférica a las 9am es más relevante para la predicción del modelo en días con temperaturas mínimas bajas.
+
+# %%
+# resumen de las características globales de SHAP values
+print("RESUMEN ESTADÍSTICO DE SHAP VALUES")
+
+shap_df = pd.DataFrame(shap_values, columns=predictoras)
+shap_stats = pd.DataFrame({
+    'Feature': predictoras,
+    'Mean |SHAP|': np.abs(shap_values).mean(axis=0),
+    'Std |SHAP|': np.abs(shap_values).std(axis=0),
+    'Max |SHAP|': np.abs(shap_values).max(axis=0),
+    'Mean SHAP': shap_values.mean(axis=0)
+})
+
+shap_stats = shap_stats.sort_values('Mean |SHAP|', ascending=False)
+print(shap_stats.head(10).to_string(index=False))
