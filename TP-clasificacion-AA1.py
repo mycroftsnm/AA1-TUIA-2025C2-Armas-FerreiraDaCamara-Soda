@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: aa1-tuia-2025c2-armas-ferreiradacamara-soda
+#     display_name: venv_aa
 #     language: python
 #     name: python3
 # ---
@@ -39,6 +39,8 @@ from sklearn.metrics import (
 
 from imblearn.over_sampling import RandomOverSampler, SMOTE
 from imblearn.under_sampling import RandomUnderSampler
+
+from pycaret.classification import setup, compare_models, predict_model, save_model
 
 # %%
 # Carga el dataset en un dataframe
@@ -1910,7 +1912,7 @@ print(resumen_umbrales.to_string(index=False))
 # Para optimizar el umbral de clasificación, investigamos el índice J de Youden. Esta métrica, al igual F1-Score en su objetivo de encontrar un umbral óptimo, se enfoca específicamente en maximizar el equilibrio entre la Sensibilidad (Recall) y la Especificidad. El umbral resultante es aquel que maximiza la fórmula $(Sensibilidad + Especificidad - 1)$, identificando así el punto de corte que ofrece el mejor balance. Esto nos permitió lograr un notable Recall (alta detección de positivos) sin sacrificar de manera desproporcionada la Especificidad (la correcta detección de negativos).
 
 # %% [markdown]
-# # MLOPS
+# # Comparación de modelos
 
 # %% [markdown]
 # ## Modelo Base
@@ -2210,3 +2212,26 @@ shap_stats = pd.DataFrame({
 
 shap_stats = shap_stats.sort_values('Mean |SHAP|', ascending=False)
 print(shap_stats.head(10).to_string(index=False))
+
+# %% [markdown]
+# ## AutoML
+
+# %%
+# Concatena las features predictoras con la target para formar un df para pycaret.
+variables_pycaret = predictoras.copy()
+variables_pycaret.append('RainTomorrow_dummy')
+
+# %%
+reg = setup(
+    data = train[variables_pycaret],
+    target = 'RainTomorrow_dummy',
+    # Deshabilita procesos ya realizados. 
+    imputation_type=None,
+    normalize=False,
+)
+
+# %%
+# Cuidado al correr esto, te mata el cpu !!
+
+best_model = compare_models()
+print(best_model)
