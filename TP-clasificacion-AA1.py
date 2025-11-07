@@ -23,7 +23,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.express as px
 
-from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -2424,11 +2423,11 @@ pred_opt = 1 if y_pred_proba_ros_final[index] >= umbral_opt else 0
 print(f"Predicción (umbral optimizado con Youden {umbral_opt:.3f}): {'Llueve' if pred_opt == 1 else 'No llueve'}")
 
 # %% [markdown]
-# Del gráfico de fuerza notamos que el valor base es la clase mayoritaria "No llueve". En este caso en particular nos encontramos que predice con una probabilidad de 0.7756 que llueve con ambos umbrales, sin optimizar y optimizado con Youden.
+# Del gráfico de fuerza notamos que el valor base es la clase mayoritaria "No llueve". En este caso en particular nos encontramos que predice con una probabilidad de 0.7759 que llueve con ambos umbrales, sin optimizar y optimizado con Youden.
 
 # %% [markdown]
 # En el gráfico SHAP se observa `f(x) = 1.24`. Este valor está en escala logit (log-odds).
-# Probabilidad = 0.7756 es la probabilidad transformada usando la función sigmoide, el valor que se obtiene con y_pred_proba_ros_final[index].
+# Probabilidad = 0.7759 es la probabilidad transformada usando la función sigmoide, el valor que se obtiene con y_pred_proba_ros_final[index].
 #
 # Ambos valores representan lo mismo pero en distintas escalas.
 
@@ -2541,7 +2540,7 @@ plt.show()
 #
 # 1. **Pressure3pm** (+1.14)
 # 2. **Humidity3pm** (+0.97)
-# 3. **Pressure9am** (+0.85) 
+# 3. **Pressure9am** (+0.86) 
 #
 # - Las variables meteorológicas de la **tarde** (3pm) son más determinantes que las de la mañana.
 # - Las **condiciones atmosféricas** (presión, humedad) son más importantes que la lluvia del día actual.
@@ -2602,7 +2601,7 @@ print(f"Falsos Negativos: {fn}")
 # %% [markdown]
 # Se observa del gráfico de cohortes por acierto del modelo que Humidity3pm presenta la mayor diferencia entre predicciones correctas e incorrectas. Cuando el modelo predice correctamente, Humidity3pm tiene mayor importancia SHAP (1.02) comparado con predicciones incorrectas (0.76), sugiriendo que niveles de humedad bien caracterizados son clave para el buen desempeño del modelo.
 #
-# Pressure3pm mantiene consistentemente la mayor importancia SHAP tanto en predicciones correctas (1.14) como incorrectas (1.12), indicando que es el feature más relevante independientemente del desempeño del modelo. En contraste y en relación a lo anteriormente mencionado, Humidity3pm muestra mayor variabilidad (1.02 vs 0.76), siendo más determinante en aciertos que en errores.
+# Pressure3pm mantiene consistentemente la mayor importancia SHAP tanto en predicciones correctas (1.15) como incorrectas (1.12), indicando que es el feature más relevante independientemente del desempeño del modelo. En contraste y en relación a lo anteriormente mencionado, Humidity3pm muestra mayor variabilidad (1.02 vs 0.76), siendo más determinante en aciertos que en errores.
 
 # %%
 # evaluamos según la media de MinTemp
