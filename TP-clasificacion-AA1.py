@@ -6,9 +6,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 #   kernelspec:
-#     display_name: venv_aa
+#     display_name: aa
 #     language: python
 #     name: python3
 # ---
@@ -40,7 +40,7 @@ from sklearn.metrics import (
 from imblearn.over_sampling import RandomOverSampler, SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 
-from pycaret.classification import setup, compare_models, predict_model, save_model
+from pycaret import classification
 
 # %%
 # Carga el dataset en un dataframe
@@ -2221,7 +2221,7 @@ variables_pycaret = predictoras.copy()
 variables_pycaret.append('RainTomorrow_dummy')
 
 # %%
-reg = setup(
+clasificacion = classification.setup(
     data = train[variables_pycaret],
     target = 'RainTomorrow_dummy',
     # Deshabilita procesos ya realizados. 
@@ -2230,7 +2230,42 @@ reg = setup(
 )
 
 # %%
-# Cuidado al correr esto, te mata el cpu !!
+# Consideramos unicamente los módelos lineales para comparar con los nuestros.
+modelos_lineales = ['lr', 'ridge', 'lda', 'svm']
 
-best_model = compare_models()
+# Nos quedamos con el mejor priorizando el Recall.
+best_model = classification.compare_models(include=modelos_lineales, sort='Recall')
 print(best_model)
+
+# %% [markdown]
+# El mejor módelo resulta ser **LinearDiscriminantAnalysis**, que presenta el mejor resultado tanto en *Recall* como en *F1*. Continuamos con el análisis en profundidad del modelo.
+
+# %%
+classification.evaluate_model(best_model)
+
+# %% [markdown]
+# En la sección *Class Report* observamos que el *recall* tiene un marcado desbalance entre clases. Es muy alto (0.94) para la clase mayoritaria (Predice con gran exactitud los días sin lluvia), mientras que solo predice correctamente la mitad de los días con lluvia (0.53). Naturalmente el mismo comportamiento se refleja en la métrica *F1*, aunque menos marcado.
+
+# %%
+predictions = classification.predict_model(best_model, data=test[variables_pycaret])
+
+# %%
+print("\nReporte de clasificación:")
+print(classification_report(y_test, predictions['prediction_label'], target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret LinearDiscriminantAnalysis')
+
+# %%
+classification.optimize_threshold(
+    best_model,
+    optimize="Recall"
+)
+
+# %%
+predictions = classification.predict_model(best_model, data=test[variables_pycaret], probability_threshold=0.17)
+
+# %%
+print("\nReporte de clasificación:")
+print(classification_report(y_test, predictions['prediction_label'], target_names=['No llueve', 'Llueve']))
+
+graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret LinearDiscriminantAnalysis')
