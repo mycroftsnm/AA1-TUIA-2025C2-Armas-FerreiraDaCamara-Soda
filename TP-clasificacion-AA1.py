@@ -17,19 +17,22 @@
 import pandas as pd
 import numpy as np
 import shap
+import optuna
 
 import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.express as px
 
 from sklearn.decomposition import PCA
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     recall_score,
     f1_score,
+    fbeta_score,
+    make_scorer,
     roc_auc_score,
     roc_curve,
     confusion_matrix,
@@ -1390,121 +1393,566 @@ y_train = train['RainTomorrow_dummy']
 x_test = test[predictoras]
 y_test = test['RainTomorrow_dummy']
 
+#%% [markdown]
+# Para optimizar los hiperparámetros elegimos maximizar la métrica F2_score,
+# El F2-Score es una variante del F-beta score donde β = 2, lo que significa que:
+#
+# `F2 = (1 + 2²) × (Precision × Recall) / (2² × Precision + Recall)`
+#
+# `F2 = 5 × (Precision × Recall) / (4 × Precision + Recall)`
+#
+# Esto implica que el Recall tiene 2 veces más peso que la Precision, lo que en nuestro caso es ideal porque decidimos:
+# - minimizar Falsos Negativos (no predecir lluvia cuando sí llueve)
+# - priorizar True Positives (detectar correctamente los días de lluvia)
+# - por consecuencia la idea es ser más permisivos con los Falsos Positivos (predecir lluvia de más que de menos)
+#
+#### Comentario sobre el umbral.
+# No haremos optimización del umbral dentro de esta primera optimización de hiperparámetros por cuestiones de eficiencia.
+# Para encontrar el umbral es posible hacerlo con los modelos ya entrenados. Es decir, el umbral no afecta el entrenamiento.
+# Por lo tanto, el enfoque será primero optimizar C y penalty (con Optuna) y posteriormente con grid search encontrar el umbral óptimo
+
+# ### Hiperparámetros a optimizar
+# 1. C (Regularization Strength)
+# ```python
+#   C = trial.suggest_float('C', 1e-4, 1e4, log=True)
+# ```
+# - Parámetro de regularización inverso: valores más pequeños = regularización más fuerte
+# - Controla el trade-off entre ajustar bien los datos de entrenamiento vs. generalizar
+#
+# **Rango explorado**:
+#
+# `1e-4` a `1e4` en escala logarítmica: C puede variar varios órdenes de magnitud, por eso se utiliza escala logarítmica.
+#
+# **Implicaciones**:
+#
+# - C pequeño (`1e-4`): modelo simple, puede subajustar (underfitting), menos propenso a overfitting
+# - C grande (`1e4`): modelo complejo, puede sobreajustar (overfitting), se ajusta más a los datos de entrenamiento
+#
+# Controla directamente cuánto el modelo puede aprender de los datos.
+# Relacionándolo con la teoría viste de regularización, C se relaciona con el valor α directamente: $\alpha = \frac{1}{C}$.
+#
+#
+# 2. penalty (Tipo de regularización)
+# ```python
+#    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+#    l1_ratio = trial.suggest_float('l1_ratio', 0, 1) if penalty == 'elasticnet' else None
+# ```
+# Define el tipo de norma usada en la penalización
+# |Penalty|Nombre|Efecto|
+# |---|---|---|
+# |`L1`|Lasso|Elimina variables que no son importantes|
+# |`L2`|Ridge|Reduce los coeficientes pero no los elimina completamente|
+# |`elasticnet`|ElasticNet|Combinación de Lasso y Ridge|
+# 
+# Si la regularización elegida es ElasticNet, se debe optimizar tambien `l1_ratio`: si es bajo se acerca más a la regularización de L1,
+# si es alto tiende más a L2. Cuando está cercano a 0.5 corresponde a un balance de ambas.
+# ### Hiperparámetros fijos (que no se optimizarán)
+# - `solver=saga`:     Algotitmo de optimización
+# - `max_iter=1000`:   Número máximo de iteraciones para convergencia
+# - `random_state=42`: Semilla para reproducibilidad
+# - `n_jobs=-1`:       Usa todos los cores disponibles del CPU
 # %% [markdown]
-# ## Modelo 1: Regresión Logística (sin balanceo)
+# ## Modelo 1: Regresión Logística sin balanceo
+#%%
+# Creamos un objeto "scorer" para cross_val_score. Este será utilizado por todas las funciones objective.
+# fbeta_score con beta=2 y promedio ponderado.
+f2_scorer = make_scorer(fbeta_score, beta=2, average='weighted', pos_label=1)
 
-# %%
-lr_base = LogisticRegression(max_iter=1000, random_state=42)
-lr_base.fit(x_train, y_train)
+def objective_lr_base(trial, X_data, y_data):
+    """
+    Función objective para el Modelo 1 (base, sin balanceo).
+    Maximiza el F2-Score
+    """
+    
+    # a. Definición del espacio de búsqueda de hiperparámetros
+    C = trial.suggest_float('C', 1e-4, 1e4, log=True)
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+    l1_ratio = trial.suggest_float('l1_ratio', 0, 1) if penalty == 'elasticnet' else None # Se usa solo si penalty es 'elasticnet'
+    
+    # b. Modelo con los parámetros trial
+    model = LogisticRegression(
+        C=C,
+        penalty=penalty,
+        l1_ratio=l1_ratio,
+        solver='saga',
+        max_iter=1000,
+        random_state=42,
+        n_jobs=-1
+    )
+    
+    # c. Evaluación del modelo usando Cross-Validation (sobre x_train, y_train)
 
-y_pred_base = lr_base.predict(x_test)
-y_pred_proba_base = lr_base.predict_proba(x_test)[:, 1]
+    # Usamos cv=5 y 'f2_weighted' como métrica
+    scores = cross_val_score(
+        model, 
+        X_data, 
+        y_data, 
+        cv=5, 
+        scoring=f2_scorer, 
+        n_jobs=-1
+    )
+    metric_value = np.mean(scores)
+    
+    # d. Devuelve la métrica a maximizar
+    return metric_value
 
-resultados_base = evaluar_modelo(y_test, y_pred_base, y_pred_proba_base, 'Sin balanceo')
+# Ejecución de Optuna 
 
-print("\nReporte de clasificación:")
-print(classification_report(y_test, y_pred_base, target_names=['No llueve', 'Llueve']))
+print("Optimizando Modelo 1: Regresión Logística sin balanceo...")
 
-graficar_matriz_confusion(y_test, y_pred_base, 'Sin balanceo')
+# Queremos MAXIMIZAR el F2-Score
+study = optuna.create_study(direction='maximize')
 
+# Pasamos los datos de entrenamiento (x_train, y_train) a la función objective
+study.optimize(
+    lambda trial: objective_lr_base(trial, x_train, y_train),
+    n_trials=25, # Número de intentos de optimización 
+    show_progress_bar=True
+)
+
+print("\nOptimización completada.")
+
+# Entrenamiento y Evaluación Final del Modelo 1 
+
+# a. Recuperar los mejores hiperparámetros encontrados
+best_optuna_params = study.best_params
+print(f"Mejor F2-Score (promedio en CV): {study.best_value:.5f}")
+print(f"Mejores hiperparámetros: {best_optuna_params}")
+
+# b. Combinar parámetros fijos y optimizados
+final_model_params = {
+    **best_optuna_params,
+    'solver': 'saga',
+    'max_iter': 1000,
+    'random_state': 42,
+    'n_jobs': -1
+}
+
+# c. Entrenar el modelo definitivo con esos parámetros
+# Se entrena sobre TODOS los datos de x_train
+print("\nEntrenando modelo final optimizado sobre x_train...")
+best_optuna_model_1 = LogisticRegression(**final_model_params)
+best_optuna_model_1.fit(x_train, y_train)
+
+# d. Evaluar el modelo final en el set de PRUEBA (x_test, y_test)
+print("Evaluando modelo final sobre x_test...")
+y_pred_unbalanced_final = best_optuna_model_1.predict(x_test)
+
+# Calcular métricas finales
+optuna_f2_unbalanced_final = fbeta_score(y_test, y_pred_unbalanced_final, beta=2, pos_label=1)
+
+print("-" * 30)
+print(f"F2-Score FINAL (en test): {optuna_f2_unbalanced_final:.5f}")
+print("\nReporte de Clasificación Final (en test):")
+print(classification_report(y_test, y_pred_unbalanced_final, target_names=['No llueve', 'Llueve']))
+
+y_pred_proba_unbalanced_final = best_optuna_model_1.predict_proba(x_test)[:, 1]
+resultados_unbalanced_final = evaluar_modelo(y_test, y_pred_unbalanced_final, y_pred_proba_unbalanced_final, 'Sin balanceo')
+
+# aplicamos la función para graficar la matriz de confusión anteriormente definida
+graficar_matriz_confusion(y_test, y_pred_unbalanced_final, 'Modelo 1 - LR Base (Optimizado sin balancear)')
 # %% [markdown]
 # ## Modelo 2: Regresión Logística con balanceo de clase
+#%%
+def objective_lr_balanced(trial, X_data, y_data):
+    """
+    Función objective para el Modelo 2 (con balanceo).
+    """
+    
+    # a. Definición del espacio de búsqueda de hiperparámetros
+    C = trial.suggest_float('C', 1e-4, 1e4, log=True)
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+    l1_ratio = trial.suggest_float('l1_ratio', 0, 1) if penalty == 'elasticnet' else None
+    
+    # b. Modelo con los parámetros trial
+    model = LogisticRegression(
+        C=C,
+        penalty=penalty,
+        l1_ratio=l1_ratio,
+        solver='saga',
+        max_iter=1000,
+        random_state=42,
+        n_jobs=-1,
+        class_weight='balanced' # se agrega en este caso para balancear las clases
+    )
+    
+    # c. Evaluación del modelo usando Cross-Validation (sobre x_train, y_train)
+    scores = cross_val_score(
+        model, 
+        X_data, 
+        y_data, 
+        cv=5, 
+        scoring=f2_scorer, 
+        n_jobs=-1
+    )
+    metric_value = np.mean(scores)
 
-# %%
-lr_balanced = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
-lr_balanced.fit(x_train, y_train)
+    # d. Devuelve la métrica a maximizar
+    return metric_value
 
-y_pred_balanced = lr_balanced.predict(x_test)
-y_pred_proba_balanced = lr_balanced.predict_proba(x_test)[:, 1]
+# Ejecución de Optuna Study
 
-resultados_balanced = evaluar_modelo(y_test, y_pred_balanced, y_pred_proba_balanced, 'Class Weight Balanced')
+print("Optimizando Modelo 2: Regresión Logística con balanceo...")
 
-print("\nReporte de clasificación:")
-print(classification_report(y_test, y_pred_balanced, target_names=['No llueve', 'Llueve']))
+study = optuna.create_study(direction='maximize')
 
-graficar_matriz_confusion(y_test, y_pred_balanced, 'Class Weight Balanced')
+# Pasamos los datos de entrenamiento (x_train, y_train) a la función objective
+study.optimize(
+    lambda trial: objective_lr_balanced(trial, x_train, y_train),
+    n_trials=25, # Número de intentos de optimización
+    show_progress_bar=True
+)
+
+print("\nOptimización completada.")
+
+# Entrenamiento y Evaluación Final del Modelo 2
+
+# a. Recuperar los mejores hiperparámetros encontrados
+best_optuna_params = study.best_params
+print(f"Mejor F2-Score (promedio en CV): {study.best_value:.5f}")
+print(f"Mejores hiperparámetros: {best_optuna_params}")
+
+# b. Combinar parámetros fijos y optimizados
+final_model_params = {
+    **best_optuna_params,
+    'solver': 'saga',
+    'max_iter': 1000,
+    'random_state': 42,
+    'n_jobs': -1,
+    'class_weight': 'balanced' # se agrega tanbién acá 
+}
+
+# c. Entrenar el modelo definitivo con esos parámetros
+# Se entrena sobre TODOS los datos de x_train
+print("\nEntrenando modelo final optimizado sobre x_train...")
+best_optuna_model_2 = LogisticRegression(**final_model_params)
+best_optuna_model_2.fit(x_train, y_train)
+
+# d. Evaluar el modelo final en el set de PRUEBA (x_test, y_test)
+print("Evaluando modelo final sobre x_test...")
+y_pred_balanced_final = best_optuna_model_2.predict(x_test)
+
+# Calcular métricas finales
+optuna_f2_balanced_final = fbeta_score(y_test, y_pred_balanced_final, beta=2, pos_label=1)
+
+print("-" * 30)
+print(f"F2-Score FINAL (en test): {optuna_f2_balanced_final:.5f}")
+print("\nReporte de Clasificación Final (en test):")
+print(classification_report(y_test, y_pred_balanced_final, target_names=['No llueve', 'Llueve']))
+
+y_pred_proba_balanced_final = best_optuna_model_2.predict_proba(x_test)[:, 1]
+resultados_balanced_final = evaluar_modelo(y_test, y_pred_balanced_final, y_pred_proba_balanced_final, 'Class Weight Balanced')
+
+# mc
+graficar_matriz_confusion(y_test, y_pred_balanced_final, 'Modelo 2 - LR Optimizado con clases balanceadas')
 
 # %% [markdown]
 # ## Modelo 3: Regresión Lógistica con SMOTE
-
-# %%
+#%%
 # Aplicar SMOTE al conjunto de entrenamiento
 smote = SMOTE(random_state=42)
 x_train_smote, y_train_smote = smote.fit_resample(x_train, y_train)
 
-print(f"Distribución después de SMOTE:")
-print(pd.Series(y_train_smote).value_counts())
+def objective_lr_smote(trial, X_data, y_data):
+    """
+    Función objective para el Modelo 3 (SMOTE).
+    """
+    
+    # a. Definición del espacio de búsqueda de hiperparámetros
+    C = trial.suggest_float('C', 1e-4, 1e4, log=True)
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+    l1_ratio = trial.suggest_float('l1_ratio', 0, 1) if penalty == 'elasticnet' else None
+    
+    # b. Modelo con los parámetros trial
+    model = LogisticRegression(
+        C=C,
+        penalty=penalty,
+        l1_ratio=l1_ratio,
+        solver='saga',
+        max_iter=1000,
+        random_state=42,
+        n_jobs=-1
+    )
+    
+    # c. Evaluación del modelo usando Cross-Validation (sobre x_train, y_train)
+    scores = cross_val_score(
+        model, 
+        X_data, 
+        y_data, 
+        cv=5, 
+        scoring=f2_scorer, 
+        n_jobs=-1
+    )
+    metric_value = np.mean(scores)
+    
+    # d. Devuelve la métrica a maximizar
+    return metric_value
 
-lr_smote = LogisticRegression(max_iter=1000, random_state=42)
-lr_smote.fit(x_train_smote, y_train_smote)
+# Ejecución de Optuna Study
 
-y_pred_smote = lr_smote.predict(x_test)
-y_pred_proba_smote = lr_smote.predict_proba(x_test)[:, 1]
+print("Optimizando Modelo 3: Regresión Logística (con balanceo SMOTE)...")
 
-resultados_smote = evaluar_modelo(y_test, y_pred_smote, y_pred_proba_smote, 'SMOTE')
+study = optuna.create_study(direction='maximize')
 
-print("\nReporte de clasificación:")
-print(classification_report(y_test, y_pred_smote, target_names=['No llueve', 'Llueve']))
+# Pasamos los datos de entrenamiento (x_train_smote, y_train_smote) a la función objective
+study.optimize(
+    lambda trial: objective_lr_smote(trial, x_train_smote, y_train_smote),
+    n_trials=25, # Número de intentos de optimización
+    show_progress_bar=True
+)
 
-graficar_matriz_confusion(y_test, y_pred_smote, 'SMOTE')
+print("\nOptimización completada.")
+
+# Entrenamiento y Evaluación Final del Modelo 3 SMOTE
+
+# a. Recuperar los mejores hiperparámetros encontrados
+best_optuna_params = study.best_params
+print(f"Mejor F2-Score (promedio en CV): {study.best_value:.5f}")
+print(f"Mejores hiperparámetros: {best_optuna_params}")
+
+# b. Combinar parámetros fijos y optimizados
+final_model_params = {
+    **best_optuna_params,
+    'solver': 'saga',
+    'max_iter': 1000,
+    'random_state': 42,
+    'n_jobs': -1
+}
+
+# c. Entrenar el modelo definitivo con esos parámetros
+# Se entrena sobre TODOS los datos de x_train_smote
+print("\nEntrenando modelo final optimizado sobre x_train_smote...")
+best_optuna_model_3 = LogisticRegression(**final_model_params)
+best_optuna_model_3.fit(x_train_smote, y_train_smote)
+
+# d. Evaluar el modelo final en el set de PRUEBA (x_test, y_test)
+print("Evaluando modelo final sobre x_test...")
+y_pred_smote_final = best_optuna_model_3.predict(x_test)
+
+# Calcular métricas finales
+optuna_f2_smote_final = fbeta_score(y_test, y_pred_smote_final, beta=2, pos_label=1)
+
+print("-" * 30)
+print(f"F2-Score FINAL (en test): {optuna_f2_smote_final:.5f}")
+print("\nReporte de Clasificación Final (en test):")
+print(classification_report(y_test, y_pred_smote_final, target_names=['No llueve', 'Llueve']))
+
+y_pred_proba_smote_final = best_optuna_model_3.predict_proba(x_test)[:, 1]
+resultados_smote_final = evaluar_modelo(y_test, y_pred_smote_final, y_pred_proba_smote_final, 'SMOTE')
+
+# mc
+graficar_matriz_confusion(y_test, y_pred_smote_final, 'Modelo 3 - SMOTE')
 
 # %% [markdown]
 # ## Modelo 4: Regresión Logística con Random Under-Samplig
-
-# %%
+#%%
 # Aplicar Random Under-Sampling
 rus = RandomUnderSampler(random_state=42)
-X_train_rus, y_train_rus = rus.fit_resample(x_train, y_train)
+x_train_rus, y_train_rus = rus.fit_resample(x_train, y_train)
 
 print(f"Distribución después de Under-Sampling:")
 print(pd.Series(y_train_rus).value_counts())
 
-lr_rus = LogisticRegression(max_iter=1000, random_state=42)
-lr_rus.fit(X_train_rus, y_train_rus)
+def objective_lr_rus(trial, X_data, y_data):
+    """
+    Función objective para el Modelo 4 (Random Under-Sampling).
+    """
+    
+    # a. Definición del espacio de búsqueda de hiperparámetros
+    C = trial.suggest_float('C', 1e-4, 1e4, log=True)
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+    l1_ratio = trial.suggest_float('l1_ratio', 0, 1) if penalty == 'elasticnet' else None
+    
+    # b. Modelo con los parámetros trial
+    model = LogisticRegression(
+        C=C,
+        penalty=penalty,
+        l1_ratio=l1_ratio,
+        solver='saga',
+        max_iter=1000,
+        random_state=42,
+        n_jobs=-1
+    )
+    
+    # c. Evaluación del modelo usando Cross-Validation (sobre x_train, y_train)
+    scores = cross_val_score(
+        model, 
+        X_data, 
+        y_data, 
+        cv=5, 
+        scoring=f2_scorer, 
+        n_jobs=-1
+    )
+    metric_value = np.mean(scores)
+    
+    # d. Devuelve la métrica a maximizar
+    return metric_value
 
-y_pred_rus = lr_rus.predict(x_test)
-y_pred_proba_rus = lr_rus.predict_proba(x_test)[:, 1]
+# Ejecución de Optuna Study
 
-resultados_rus = evaluar_modelo(y_test, y_pred_rus, y_pred_proba_rus, 'Random Under-Sampling')
+print("Optimizando Modelo 4: Regresión Logística (Under-Sampling)...")
 
-print("\nReporte de clasificación:")
-print(classification_report(y_test, y_pred_rus, target_names=['No llueve', 'Llueve']))
+study = optuna.create_study(direction='maximize')
 
-graficar_matriz_confusion(y_test, y_pred_rus, 'Random Under-Sampling')
+# Pasamos los datos de entrenamiento (x_train_rus, y_train_rus) a la función objective
+study.optimize(
+    lambda trial: objective_lr_rus(trial, x_train_rus, y_train_rus),
+    n_trials=25, # Número de intentos de optimización
+    show_progress_bar=True
+)
+
+print("\nOptimización completada.")
+
+# Entrenamiento y Evaluación Final del Modelo 4 Random Under-Sampling
+
+# a. Recuperar los mejores hiperparámetros encontrados
+best_optuna_params = study.best_params
+print(f"Mejor F2-Score (promedio en CV): {study.best_value:.5f}")
+print(f"Mejores hiperparámetros: {best_optuna_params}")
+
+# b. Combinar parámetros fijos y optimizados
+final_model_params = {
+    **best_optuna_params,
+    'solver': 'saga',
+    'max_iter': 1000,
+    'random_state': 42,
+    'n_jobs': -1
+}
+
+# c. Entrenar el modelo definitivo con esos parámetros
+# Se entrena sobre TODOS los datos de x_train_rus
+print("\nEntrenando modelo final optimizado sobre x_train_rus...")
+best_optuna_model_4 = LogisticRegression(**final_model_params)
+best_optuna_model_4.fit(x_train_rus, y_train_rus)
+
+# d. Evaluar el modelo final en el set de PRUEBA (x_test, y_test)
+print("Evaluando modelo final sobre x_test...")
+y_pred_rus_final = best_optuna_model_4.predict(x_test)
+
+# Calcular métricas finales
+optuna_f2_rus_final = fbeta_score(y_test, y_pred_rus_final, beta=2, pos_label=1)
+
+print("-" * 30)
+print(f"F2-Score FINAL (en test): {optuna_f2_rus_final:.5f}")
+print("\nReporte de Clasificación Final (en test):")
+print(classification_report(y_test, y_pred_rus_final, target_names=['No llueve', 'Llueve']))
+
+y_pred_proba_rus_final = best_optuna_model_4.predict_proba(x_test)[:, 1]
+resultados_rus_final = evaluar_modelo(y_test, y_pred_rus_final, y_pred_proba_rus_final, 'Random Under-Sampling')
+
+# mc
+graficar_matriz_confusion(y_test, y_pred_rus_final, 'Modelo 4 - Random Under-Sampling')
 
 
-# %% [markdown]
-# ## Modelo 5: Regresión Logística con Random Over-Sampling
 
-# %%
+#%%
 # Aplicar Random Over-Sampling
 ros = RandomOverSampler(random_state=42)
-X_train_ros, y_train_ros = ros.fit_resample(x_train, y_train)
+x_train_ros, y_train_ros = ros.fit_resample(x_train, y_train)
 
 print(f"Distribución después de Over-Sampling:")
 print(pd.Series(y_train_ros).value_counts())
 
-lr_ros = LogisticRegression(max_iter=1000, random_state=42)
-lr_ros.fit(X_train_ros, y_train_ros)
+def objective_lr_ros(trial, X_data, y_data):
+    """
+    Función objective para el Modelo 5 (Random Over-Sampling).
+    """
+    
+    # a. Definición del espacio de búsqueda de hiperparámetros
+    C = trial.suggest_float('C', 1e-4, 1e4, log=True)
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+    l1_ratio = trial.suggest_float('l1_ratio', 0, 1) if penalty == 'elasticnet' else None
+    
+    # b. Modelo con los parámetros trial
+    model = LogisticRegression(
+        C=C,
+        penalty=penalty,
+        l1_ratio=l1_ratio,
+        solver='saga',
+        max_iter=1000,
+        random_state=42,
+        n_jobs=-1
+    )
+    
+    # c. Evaluación del modelo usando Cross-Validation (sobre x_train, y_train)
 
-y_pred_ros = lr_ros.predict(x_test)
-y_pred_proba_ros = lr_ros.predict_proba(x_test)[:, 1]
+    # Usamos cv=5 para robustez y 'f2_weighted' como métrica
+    scores = cross_val_score(
+        model, 
+        X_data, 
+        y_data, 
+        cv=5, 
+        scoring=f2_scorer, 
+        n_jobs=-1
+    )
+    metric_value = np.mean(scores)
+    
+    # d. Devuelve la métrica a maximizar
+    return metric_value
 
-resultados_ros = evaluar_modelo(y_test, y_pred_ros, y_pred_proba_ros, 'Random Over-Sampling')
+# Ejecución de Optuna Study
 
-print("\nReporte de clasificación:")
-print(classification_report(y_test, y_pred_ros, target_names=['No llueve', 'Llueve']))
+print("Optimizando Modelo 5: Regresión Logística (Over-Sampling)...")
 
-graficar_matriz_confusion(y_test, y_pred_ros, 'Random Over-Sampling')
+study = optuna.create_study(direction='maximize')
+
+# Pasamos los datos de entrenamiento (x_train_ros, y_train_ros) a la función objective
+study.optimize(
+    lambda trial: objective_lr_ros(trial, x_train_ros, y_train_ros),
+    n_trials=25, # Número de intentos de optimización
+    show_progress_bar=True
+)
+
+print("\nOptimización completada.")
+
+# Entrenamiento y Evaluación Final del Modelo 5 Random Over-Sampling
+
+# a. Recuperar los mejores hiperparámetros encontrados
+best_optuna_params = study.best_params
+print(f"Mejor F2-Score (promedio en CV): {study.best_value:.5f}")
+print(f"Mejores hiperparámetros: {best_optuna_params}")
+
+# b. Combinar parámetros fijos y optimizados
+final_model_params = {
+    **best_optuna_params,
+    'solver': 'saga',
+    'max_iter': 1000,
+    'random_state': 42,
+    'n_jobs': -1
+}
+
+# c. Entrenar el modelo definitivo con esos parámetros
+# Se entrena sobre TODOS los datos de x_train_ros
+print("\nEntrenando modelo final optimizado sobre x_train_ros...")
+best_optuna_model_5 = LogisticRegression(**final_model_params)
+best_optuna_model_5.fit(x_train_ros, y_train_ros)
+
+# d. Evaluar el modelo final en el set de PRUEBA (x_test, y_test)
+print("Evaluando modelo final sobre x_test...")
+y_pred_ros_final = best_optuna_model_5.predict(x_test)
+
+# Calcular métricas finales
+optuna_f2_ros_final = fbeta_score(y_test, y_pred_ros_final, beta=2, pos_label=1)
+
+print("-" * 30)
+print(f"F2-Score FINAL (en test): {optuna_f2_ros_final:.5f}")
+print("\nReporte de Clasificación Final (en test):")
+print(classification_report(y_test, y_pred_ros_final, target_names=['No llueve', 'Llueve']))
+
+y_pred_proba_ros_final = best_optuna_model_5.predict_proba(x_test)[:, 1]
+resultados_ros_final = evaluar_modelo(y_test, y_pred_ros_final, y_pred_proba_ros_final, 'Random Over-Sampling')
+
+# mc
+graficar_matriz_confusion(y_test, y_pred_ros_final, 'Modelo 5 - Random Over-Sampling')
 
 # %%
 # Crear DataFrame con todos los resultados
 df_resultados = pd.DataFrame([
-    resultados_base,
-    resultados_balanced,
-    resultados_smote,
-    resultados_rus,
-    resultados_ros
+    resultados_unbalanced_final,
+    resultados_balanced_final,
+    resultados_smote_final,
+    resultados_rus_final,
+    resultados_ros_final
 ])
 
 print("\nCOMPARACIÓN DE MODELOS")
@@ -1539,11 +1987,11 @@ plt.show()
 fig, ax = plt.subplots(figsize=(12, 8))
 
 modelos_predicciones = [
-    ('Sin balanceo', y_pred_proba_base),
-    ('Class Weight Balanced', y_pred_proba_balanced),
-    ('SMOTE', y_pred_proba_smote),
-    ('Random Under-Sampling', y_pred_proba_rus),
-    ('Random Over-Sampling', y_pred_proba_ros)
+    ('Sin balanceo', y_pred_proba_unbalanced_final),
+    ('Class Weight Balanced', y_pred_proba_balanced_final),
+    ('SMOTE', y_pred_proba_smote_final),
+    ('Random Under-Sampling', y_pred_proba_rus_final),
+    ('Random Over-Sampling', y_pred_proba_ros_final)
 ]
 
 for nombre, y_pred_proba in modelos_predicciones:
@@ -1589,15 +2037,15 @@ print(f"\nMejor modelo según F1-Score: {mejor_modelo_nombre}")
 
 # Obtener coeficientes del mejor modelo
 if mejor_modelo_nombre == 'Sin balanceo':
-    modelo = lr_base
+    modelo = best_optuna_model_1
 elif mejor_modelo_nombre == 'Class Weight Balanced':
-    modelo = lr_balanced
+    modelo = best_optuna_model_2
 elif mejor_modelo_nombre == 'SMOTE':
-    modelo = lr_smote
+    modelo = best_optuna_model_3
 elif mejor_modelo_nombre == 'Random Under-Sampling':
-    modelo = lr_rus
+    modelo = best_optuna_model_4
 else:# mejor_modelo_nombre == 'Random Over-Sampling':
-    modelo = lr_ros
+    modelo = best_optuna_model_5
 
 # %%
 # importancia de features
@@ -1746,21 +2194,17 @@ umbrales_optimos_f1 = {}
 umbrales_optimos_youden = {}
 
 modelos_info = [
-    ('Sin balanceo', y_pred_proba_base, lr_base),
-    ('Class Weight Balanced', y_pred_proba_balanced, lr_balanced),
-    ('SMOTE', y_pred_proba_smote, lr_smote),
-    ('Random Under-Sampling', y_pred_proba_rus, lr_rus),
-    ('Random Over-Sampling', y_pred_proba_ros, lr_ros)
+    ('Sin balanceo', y_pred_proba_unbalanced_final, best_optuna_model_1),
+    ('Class Weight Balanced', y_pred_proba_balanced_final, best_optuna_model_2),
+    ('SMOTE', y_pred_proba_smote_final, best_optuna_model_3),
+    ('Random Under-Sampling', y_pred_proba_rus_final, best_optuna_model_4),
+    ('Random Over-Sampling', y_pred_proba_ros_final, best_optuna_model_5)
 ]
 
-print("=" * 80)
 print("OPTIMIZACIÓN DE UMBRALES")
-print("=" * 80)
 
 for nombre, y_pred_proba, modelo in modelos_info:
-    print(f"\n{'='*70}")
     print(f"Modelo: {nombre}")
-    print('='*70)
     
     # Encuentra umbral óptimo para F1
     umbral_f1, score_f1, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'f1')
@@ -1808,6 +2252,7 @@ resultados_opt_f1 = []
 for nombre, y_pred_proba, modelo in modelos_info:
     umbral_opt = umbrales_optimos_f1[nombre]
     y_pred_opt = (y_pred_proba >= umbral_opt).astype(int)
+    
     resultados = {
         'Modelo': nombre,
         'Umbral': umbral_opt,
@@ -1841,14 +2286,11 @@ for nombre, y_pred_proba, modelo in modelos_info:
 
 df_resultados_opt_youden = pd.DataFrame(resultados_opt_youden)
 
-print("\n" + "=" * 100)
+
 print("RESULTADOS CON UMBRAL ÓPTIMO F1")
-print("=" * 100)
 print(df_resultados_opt_f1.to_string(index=False))
 
-print("\n" + "=" * 100)
 print("RESULTADOS CON UMBRAL ÓPTIMO YOUDEN")
-print("=" * 100)
 print(df_resultados_opt_youden.to_string(index=False))
 
 # %%
@@ -1867,10 +2309,10 @@ df_combinado = pd.concat([df_05, df_f1, df_youden], ignore_index=True)
 
 # %%
 # Visualización comparativa
-fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+fig, axes = plt.subplots(2, 2, figsize=(18, 14))
 
 metricas_comparar = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
-colores = ['#E8E8E8', '#2E86AB', '#06A77D']
+colores = ["#B42D2D", '#2E86AB', '#06A77D']
 
 for idx, metrica in enumerate(metricas_comparar):
     ax = axes[idx // 2, idx % 2]
@@ -1881,7 +2323,8 @@ for idx, metrica in enumerate(metricas_comparar):
     ax.set_title(f'{metrica}', fontsize=15, fontweight='bold', pad=10)
     ax.set_xlabel('')
     ax.set_ylabel(metrica, fontsize=13)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', fontsize=11)
+    ax.tick_params(axis='x', rotation=45, labelsize=11)
+    plt.setp(ax.get_xticklabels(), ha='right')
     ax.set_ylim(0, 1)
     ax.legend(title='', fontsize=11, framealpha=0.9)
     ax.grid(axis='y', alpha=0.3, linestyle='--')
@@ -1892,9 +2335,7 @@ plt.tight_layout()
 plt.show()
 
 # %%
-print("\n" + "=" * 80)
 print("RESUMEN DE UMBRALES ÓPTIMOS POR MODELO")
-print("=" * 80)
 
 resumen_umbrales = pd.DataFrame({
     'Modelo': [nombre for nombre, _, _ in modelos_info],
@@ -1911,7 +2352,7 @@ print(resumen_umbrales.to_string(index=False))
 # Para optimizar el umbral de clasificación, investigamos el índice J de Youden. Esta métrica, al igual F1-Score en su objetivo de encontrar un umbral óptimo, se enfoca específicamente en maximizar el equilibrio entre la Sensibilidad (Recall) y la Especificidad. El umbral resultante es aquel que maximiza la fórmula $(Sensibilidad + Especificidad - 1)$, identificando así el punto de corte que ofrece el mejor balance. Esto nos permitió lograr un notable Recall (alta detección de positivos) sin sacrificar de manera desproporcionada la Especificidad (la correcta detección de negativos).
 
 # %% [markdown]
-# # Comparación de modelos
+# # MLOPS
 
 # %% [markdown]
 # ## Modelo Base
@@ -1946,7 +2387,7 @@ graficar_matriz_confusion(y_test, y_pred_base_rainfall, 'Modelo Base Rainfall')
 # %%
 # comenzamos creando el objeto explainer SHAP
 
-explainer = shap.LinearExplainer(lr_ros, X_train_ros, feature_names=predictoras)
+explainer = shap.LinearExplainer(best_optuna_model_5, x_train_ros, feature_names=predictoras)
 
 # %%
 shap_values = explainer.shap_values(x_test)
@@ -1974,12 +2415,12 @@ shap.force_plot(explainer.expected_value,
 # información de la observación
 print(f"INFORMACIÓN DE LA OBSERVACIÓN {index}")
 print(f"Valor real: {'Llueve' if y_test.iloc[index] == 1 else 'No llueve'}")
-print(f"Probabilidad predicha: {y_pred_proba_ros[index]:.4f}")
-print(f"Predicción (umbral 0.5): {'Llueve' if y_pred_ros[index] == 1 else 'No llueve'}")
+print(f"Probabilidad predicha: {y_pred_proba_ros_final[index]:.4f}")
+print(f"Predicción (umbral 0.5): {'Llueve' if y_pred_ros_final[index] == 1 else 'No llueve'}")
 
 # umbral optimizado Youden
 umbral_opt = umbrales_optimos_youden['Random Over-Sampling']
-pred_opt = 1 if y_pred_proba_ros[index] >= umbral_opt else 0
+pred_opt = 1 if y_pred_proba_ros_final[index] >= umbral_opt else 0
 print(f"Predicción (umbral optimizado con Youden {umbral_opt:.3f}): {'Llueve' if pred_opt == 1 else 'No llueve'}")
 
 # %% [markdown]
@@ -1987,7 +2428,7 @@ print(f"Predicción (umbral optimizado con Youden {umbral_opt:.3f}): {'Llueve' i
 
 # %% [markdown]
 # En el gráfico SHAP se observa `f(x) = 1.24`. Este valor está en escala logit (log-odds).
-# Probabilidad = 0.7756 es la probabilidad transformada usando la función sigmoide, el valor que se obtiene con y_pred_proba_ros[index].
+# Probabilidad = 0.7756 es la probabilidad transformada usando la función sigmoide, el valor que se obtiene con y_pred_proba_ros_final[index].
 #
 # Ambos valores representan lo mismo pero en distintas escalas.
 
@@ -2012,9 +2453,9 @@ print(f"ANÁLISIS DE LA OBSERVACIÓN {index}")
 
 print(f"Valor base (E[f(X)]): {explainer.expected_value:.4f}")
 print(f"Predicción final f(x): {explainer.expected_value + shap_values[index].sum():.4f}")
-print(f"Probabilidad predicha: {y_pred_proba_ros[index]:.4f}")
+print(f"Probabilidad predicha: {y_pred_proba_ros_final[index]:.4f}")
 print(f"Valor real: {'Llueve' if y_test.iloc[index] == 1 else 'No llueve'}")
-print(f"Predicción (umbral óptimo {umbrales_optimos_youden['Random Over-Sampling']:.3f}): {'Llueve' if (y_pred_proba_ros[index] >= umbrales_optimos_youden['Random Over-Sampling']) else 'No llueve'}")
+print(f"Predicción (umbral óptimo {umbrales_optimos_youden['Random Over-Sampling']:.3f}): {'Llueve' if (y_pred_proba_ros_final[index] >= umbrales_optimos_youden['Random Over-Sampling']) else 'No llueve'}")
 
 # %% [markdown]
 # La información es la misma, sin embargo, con el gráfico de Waterfall podemos distinguir mejor la influencia de cada una de las variables. 
@@ -2027,27 +2468,27 @@ print(f"Predicción (umbral óptimo {umbrales_optimos_youden['Random Over-Sampli
 
 # %%
 # Encuentra las predicciones más confiantes (correctas e incorrectas)
-y_pred_opt_ros = (y_pred_proba_ros >= umbrales_optimos_youden['Random Over-Sampling']).astype(int)
+y_pred_opt_ros = (y_pred_proba_ros_final >= umbrales_optimos_youden['Random Over-Sampling']).astype(int)
 
 print("CASOS MÁS INTERESANTES PARA ANALIZAR")
 
 # Predicciones más confiantes de "Llueve" que son correctas
-tp_probs = y_pred_proba_ros[(y_pred_opt_ros == 1) & (y_test == 1)]
+tp_probs = y_pred_proba_ros_final[(y_pred_opt_ros == 1) & (y_test == 1)]
 if len(tp_probs) > 0:
     idx_tp_max = np.where((y_pred_opt_ros == 1) & (y_test == 1))[0][np.argmax(tp_probs)]
-    print(f"\n1. TP más confiante (índice {idx_tp_max}): prob = {y_pred_proba_ros[idx_tp_max]:.4f}")
+    print(f"\n1. TP más confiante (índice {idx_tp_max}): prob = {y_pred_proba_ros_final[idx_tp_max]:.4f}")
 
 # Predicciones más confiantes de "Llueve" que son incorrectas (Falsos Positivos)
-fp_probs = y_pred_proba_ros[(y_pred_opt_ros == 1) & (y_test == 0)]
+fp_probs = y_pred_proba_ros_final[(y_pred_opt_ros == 1) & (y_test == 0)]
 if len(fp_probs) > 0:
     idx_fp_max = np.where((y_pred_opt_ros == 1) & (y_test == 0))[0][np.argmax(fp_probs)]
-    print(f"2. FP más confiante (índice {idx_fp_max}): prob = {y_pred_proba_ros[idx_fp_max]:.4f}")
+    print(f"2. FP más confiante (índice {idx_fp_max}): prob = {y_pred_proba_ros_final[idx_fp_max]:.4f}")
 
 # Predicciones cercanas al umbral (casos dudosos)
 umbral = umbrales_optimos_youden['Random Over-Sampling']
-diff_umbral = np.abs(y_pred_proba_ros - umbral)
+diff_umbral = np.abs(y_pred_proba_ros_final - umbral)
 idx_cercano = np.argmin(diff_umbral)
-print(f"3. Predicción más cercana al umbral (índice {idx_cercano}): prob = {y_pred_proba_ros[idx_cercano]:.4f}")
+print(f"3. Predicción más cercana al umbral (índice {idx_cercano}): prob = {y_pred_proba_ros_final[idx_cercano]:.4f}")
 
 # Visualiza estos casos interesantes
 casos_especiales = [idx_tp_max if len(tp_probs) > 0 else None,
@@ -2126,7 +2567,7 @@ plt.show()
 
 # %%
 # Cohortes según si el modelo acertó o no
-y_pred_opt_ros = (y_pred_proba_ros >= umbrales_optimos_youden['Random Over-Sampling']).astype(int)
+y_pred_opt_ros = (y_pred_proba_ros_final >= umbrales_optimos_youden['Random Over-Sampling']).astype(int)
 aciertos = (y_pred_opt_ros == y_test.values).astype(int)
 
 aux_aciertos = [
