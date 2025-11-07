@@ -1808,7 +1808,6 @@ resultados_opt_f1 = []
 for nombre, y_pred_proba, modelo in modelos_info:
     umbral_opt = umbrales_optimos_f1[nombre]
     y_pred_opt = (y_pred_proba >= umbral_opt).astype(int)
-    
     resultados = {
         'Modelo': nombre,
         'Umbral': umbral_opt,
