@@ -31,6 +31,7 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     fbeta_score,
+    precision_score,
     make_scorer,
     roc_auc_score,
     roc_curve,
@@ -1353,6 +1354,11 @@ print(f'Vamos a utilizar las siguientes variables para entrenar el modelo:\n{pre
 # # Modelado
 
 # %%
+def f2_score(y_true, y_pred, **kwargs):
+    return fbeta_score(y_true, y_pred, beta=2, pos_label=1)
+
+
+# %%
 def evaluar_modelo(y_true, y_pred, y_pred_proba, nombre_modelo):
     """
     Evalúa un modelo y retorna un diccionario con las métricas
@@ -1363,7 +1369,8 @@ def evaluar_modelo(y_true, y_pred, y_pred_proba, nombre_modelo):
         'Precision': classification_report(y_true, y_pred, output_dict=True)['1']['precision'],
         'Recall': classification_report(y_true, y_pred, output_dict=True)['1']['recall'],
         'F1-Score': f1_score(y_true, y_pred),
-        'ROC-AUC': roc_auc_score(y_true, y_pred_proba)
+        'ROC-AUC': roc_auc_score(y_true, y_pred_proba),
+        'F2-Score': f2_score(y_true, y_pred)
     }
     
     return resultados
@@ -1392,7 +1399,7 @@ y_train = train['RainTomorrow_dummy']
 x_test = test[predictoras]
 y_test = test['RainTomorrow_dummy']
 
-#%% [markdown]
+# %% [markdown]
 # Para optimizar los hiperparámetros elegimos maximizar la métrica F2_score,
 # El F2-Score es una variante del F-beta score donde β = 2, lo que significa que:
 #
@@ -1405,11 +1412,11 @@ y_test = test['RainTomorrow_dummy']
 # - priorizar True Positives (detectar correctamente los días de lluvia)
 # - por consecuencia la idea es ser más permisivos con los Falsos Positivos (predecir lluvia de más que de menos)
 #
-#### Comentario sobre el umbral.
+# ### Comentario sobre el umbral.
 # No haremos optimización del umbral dentro de esta primera optimización de hiperparámetros por cuestiones de eficiencia.
 # Para encontrar el umbral es posible hacerlo con los modelos ya entrenados. Es decir, el umbral no afecta el entrenamiento.
 # Por lo tanto, el enfoque será primero optimizar C y penalty (con Optuna) y posteriormente con grid search encontrar el umbral óptimo
-
+#
 # ### Hiperparámetros a optimizar
 # 1. C (Regularization Strength)
 # ```python
@@ -1442,7 +1449,7 @@ y_test = test['RainTomorrow_dummy']
 # |`L1`|Lasso|Elimina variables que no son importantes|
 # |`L2`|Ridge|Reduce los coeficientes pero no los elimina completamente|
 # |`elasticnet`|ElasticNet|Combinación de Lasso y Ridge|
-# 
+#
 # Si la regularización elegida es ElasticNet, se debe optimizar tambien `l1_ratio`: si es bajo se acerca más a la regularización de L1,
 # si es alto tiende más a L2. Cuando está cercano a 0.5 corresponde a un balance de ambas.
 # ### Hiperparámetros fijos (que no se optimizarán)
@@ -1452,7 +1459,7 @@ y_test = test['RainTomorrow_dummy']
 # - `n_jobs=-1`:       Usa todos los cores disponibles del CPU
 # %% [markdown]
 # ## Modelo 1: Regresión Logística sin balanceo
-#%%
+# %%
 # Creamos un objeto "scorer" para cross_val_score. Este será utilizado por todas las funciones objective.
 # fbeta_score con beta=2 y promedio ponderado.
 f2_scorer = make_scorer(fbeta_score, beta=2, average='weighted', pos_label=1)
@@ -1552,7 +1559,7 @@ resultados_unbalanced_final = evaluar_modelo(y_test, y_pred_unbalanced_final, y_
 graficar_matriz_confusion(y_test, y_pred_unbalanced_final, 'Modelo 1 - LR Base (Optimizado sin balancear)')
 # %% [markdown]
 # ## Modelo 2: Regresión Logística con balanceo de clase
-#%%
+# %%
 def objective_lr_balanced(trial, X_data, y_data):
     """
     Función objective para el Modelo 2 (con balanceo).
@@ -1647,7 +1654,7 @@ graficar_matriz_confusion(y_test, y_pred_balanced_final, 'Modelo 2 - LR Optimiza
 
 # %% [markdown]
 # ## Modelo 3: Regresión Lógistica con SMOTE
-#%%
+# %%
 # Aplicar SMOTE al conjunto de entrenamiento
 smote = SMOTE(random_state=42)
 x_train_smote, y_train_smote = smote.fit_resample(x_train, y_train)
@@ -1744,7 +1751,7 @@ graficar_matriz_confusion(y_test, y_pred_smote_final, 'Modelo 3 - SMOTE')
 
 # %% [markdown]
 # ## Modelo 4: Regresión Logística con Random Under-Samplig
-#%%
+# %%
 # Aplicar Random Under-Sampling
 rus = RandomUnderSampler(random_state=42)
 x_train_rus, y_train_rus = rus.fit_resample(x_train, y_train)
@@ -1844,7 +1851,7 @@ graficar_matriz_confusion(y_test, y_pred_rus_final, 'Modelo 4 - Random Under-Sam
 
 
 
-#%%
+# %%
 # Aplicar Random Over-Sampling
 ros = RandomOverSampler(random_state=42)
 x_train_ros, y_train_ros = ros.fit_resample(x_train, y_train)
@@ -2080,8 +2087,9 @@ def encontrar_umbral_optimo(y_true, y_pred_proba, metrica='f1'):
     Encuentra el umbral óptimo según la métrica especificada
     
     Parámetros:
-    - metrica: 'f1' o 'youden'
+    - metrica: 'f1', 'f2' o 'youden'
         - 'f1': Optimiza F1-Score (balance entre precision y recall)
+        - 'f2': Optimiza F2-Score (balance entre precision y recall, ponderando mas el recall)
         - 'youden': Optimiza índice de Youden (sensitivity + specificity - 1)
     """
     umbrales = np.linspace(0.01, 0.99, 99)  # Evitamos extremos 0 y 1
@@ -2097,6 +2105,9 @@ def encontrar_umbral_optimo(y_true, y_pred_proba, metrica='f1'):
         
         if metrica == 'f1':
             score = f1_score(y_true, y_pred, zero_division=0)
+
+        elif metrica == 'f2':
+            score = f2_score(y_true, y_pred, zero_division=0)
             
         elif metrica == 'youden':
             tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
@@ -2110,7 +2121,7 @@ def encontrar_umbral_optimo(y_true, y_pred_proba, metrica='f1'):
         scores.append(score)
     
     idx_optimo = np.argmax(scores)
-    return umbrales[idx_optimo], scores[idx_optimo], umbrales, scores
+    return umbrales[idx_optimo], scores[idx_optimo]
 
 
 def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
@@ -2119,6 +2130,7 @@ def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
     """
     umbrales = np.linspace(0.01, 0.99, 99)
     f1_scores = []
+    f2_scores = []
     precision_scores = []
     recall_scores = []
     youden_scores = []
@@ -2135,6 +2147,7 @@ def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
             continue
         
         f1_scores.append(f1_score(y_true, y_pred, zero_division=0))
+        f2_scores.append(f2_score(y_true, y_pred, zero_division=0))
         report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
         precision_scores.append(report['1']['precision'])
         recall_scores.append(report['1']['recall'])
@@ -2144,10 +2157,13 @@ def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
         sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
         youden_scores.append(sensitivity + specificity - 1)
+
+
     
     fig, ax = plt.subplots(figsize=(14, 7))
     
     # Plotear métricas
+    ax.plot(umbrales, f2_scores, label='F2-Score', linewidth=2.5, color="#DD2E2E")
     ax.plot(umbrales, f1_scores, label='F1-Score', linewidth=2.5, color='#2E86AB')
     ax.plot(umbrales, precision_scores, label='Precision', linewidth=2, 
             alpha=0.7, color='#A23B72', linestyle='--')
@@ -2158,16 +2174,23 @@ def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
     
     # Marca umbrales óptimos
     idx_f1_max = np.argmax(f1_scores)
+    idx_f2_max = np.argmax(f2_scores)
     idx_youden_max = np.argmax(youden_scores)
+    
     
     ax.axvline(umbrales[idx_f1_max], color='#2E86AB', linestyle=':', alpha=0.6, linewidth=2,
                label=f'Óptimo F1 = {umbrales[idx_f1_max]:.2f}')
+    ax.axvline(umbrales[idx_f2_max], color='#DD2E2E', linestyle=':', alpha=0.6, linewidth=2,
+            label=f'Óptimo F2 = {umbrales[idx_f2_max]:.2f}')
     ax.axvline(umbrales[idx_youden_max], color='#06A77D', linestyle=':', alpha=0.6, linewidth=2,
                label=f'Óptimo Youden = {umbrales[idx_youden_max]:.2f}')
     
     # Marca umbral 0.5 por defecto
-    ax.axvline(0.5, color='red', linestyle='--', alpha=0.4, linewidth=1.5,
+    ax.axvline(0.5, color='black', linestyle='--', alpha=0.4, linewidth=1.5,
                label='Umbral por defecto (0.5)')
+    
+    ax.axhline(0.5, color='black', linestyle='--', alpha=0.4, linewidth=1.5,
+               label='0.5')
     
     ax.set_xlabel('Umbral de Decisión', fontsize=13, fontweight='bold')
     ax.set_ylabel('Score', fontsize=13, fontweight='bold')
@@ -2181,8 +2204,7 @@ def graficar_metricas_por_umbral(y_true, y_pred_proba, nombre_modelo):
     plt.tight_layout()
     plt.show()
     
-    return umbrales[idx_f1_max], umbrales[idx_youden_max]
-
+    return umbrales[idx_f1_max], umbrales[idx_f2_max], umbrales[idx_youden_max]
 
 # %% [markdown]
 # ### Análisis de umbrales para cada modelo
@@ -2206,10 +2228,10 @@ for nombre, y_pred_proba, modelo in modelos_info:
     print(f"Modelo: {nombre}")
     
     # Encuentra umbral óptimo para F1
-    umbral_f1, score_f1, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'f1')
+    umbral_f1, score_f1= encontrar_umbral_optimo(y_test, y_pred_proba, 'f1')
     
     # Encuentra umbral óptimo para Youden
-    umbral_youden, score_youden, _, _ = encontrar_umbral_optimo(y_test, y_pred_proba, 'youden')
+    umbral_youden, score_youden= encontrar_umbral_optimo(y_test, y_pred_proba, 'youden')
     
     print(f"\nUMBRALES ÓPTIMOS:")
     print(f"   • Umbral por defecto:    0.500")
