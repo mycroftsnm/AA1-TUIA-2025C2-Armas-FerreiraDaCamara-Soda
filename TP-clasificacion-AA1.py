@@ -2731,3 +2731,262 @@ print("\nReporte de clasificación:")
 print(classification_report(y_test, predictions['prediction_label'], target_names=['No llueve', 'Llueve']))
 
 graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret LinearDiscriminantAnalysis')
+
+# %% [markdown]
+# # NN
+
+# %%
+from tensorflow.keras import * 
+from tensorflow.keras.layers import *
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+import tensorflow as tf
+
+# %%
+from sklearn.utils.class_weight import compute_class_weight
+
+pesos = compute_class_weight(
+    class_weight='balanced', 
+    classes=np.unique(y_train), 
+    y=y_train
+)
+
+# Dict con frecuencia por clase para hacer balanceo en keras
+class_weights_dict = dict(enumerate(pesos))
+
+# %%
+tf.keras.utils.set_random_seed(42) # Determinismo
+
+X_t, X_v, y_t, y_v = train_test_split(
+    x_train, y_train, 
+    test_size=0.20,
+    random_state=42,
+    stratify=y_train
+)
+
+# EarlyStop en caso de que no mejore el pr_auc en 10 épocas seguidas
+early_stop = EarlyStopping(
+    monitor='val_pr_auc', 
+    patience=10, 
+    mode='max', 
+    restore_best_weights=True,
+    verbose=1
+)
+
+# Arquitectura simple típica, 2 capas (16 y 8), y un dropout del 0.1 entre capas.
+model = Sequential([
+    Input(shape=(len(predictoras),)),
+    Dense(16, activation='relu'),
+    Dropout(0.1),
+    Dense(8, activation='relu'),
+    Dense(1, activation='sigmoid'),
+])
+
+model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=[tf.keras.metrics.AUC(curve='PR', name='pr_auc')])
+
+history = model.fit(
+    X_t, y_t,
+    validation_data=(X_v, y_v),
+    epochs=100, 
+    batch_size=256,
+    callbacks=[early_stop],
+    class_weight=class_weights_dict, # Balanceo de clases
+    verbose=1,
+)
+
+# %%
+nn_tipica = model
+
+# %%
+y_pred_proba = nn_tipica.predict(x_test)
+y_pred = (y_pred_proba > 0.5).astype(int)
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Simple 16/8')
+
+# %%
+graficar_matriz_confusion(y_test, y_pred,'NN Simple 16/8')
+
+# %% [markdown]
+# Obtuvimos buenas métricas, *F2-score = 0.733* es un valor alentador teniendo en cuenta que el modelo tiene además *Acuraccy = 0.812* , *Recall = 0.800* y sobretodo un valor de *Precisión = 0.561* que supera comodamente la condición de mayor a 0.5 que nos impusimos. Si bien es un buen fit, vamos a optimizar hiperparametros para tratar de encontrar la mejor arquitectura posible. También vamos a explorar optimización del umbral teniendo en cuenta que nos "Sobra" precisión y posiblemente podamos mejorar un poco más el F2, que es nuestra métrica de referencia.
+
+# %% [markdown]
+# ### Optimización de Hiperparámetros con Optuna
+#
+# Buscamos la arquitectura que maximice el valor de *F2-score* pero manteniendo *Precision > 0.5*. Para esto corremos 100 trials variando la cantidad de capas, cantidad de neuronas y si usa o no Dropout. Monitoreamos el valor de *pr_auc* tanto para el Pruner como para el EarlyStop. Ya que eso nos garantiza un buen valor de *F2_score* en algún umbral.
+
+# %%
+import optuna
+from tensorflow.keras.callbacks import EarlyStopping
+from optuna.integration import TFKerasPruningCallback
+from optuna.samplers import TPESampler
+
+def objective(trial):
+    tf.keras.backend.clear_session()
+    tf.keras.utils.set_random_seed(42) # Determinismo
+
+    X_t, X_v, y_t, y_v = train_test_split(
+        x_train, y_train, 
+        test_size=0.2, 
+        random_state=42, # Fijo para que todos los trials usen los mismos datos
+        stratify=y_train
+    )
+
+    model = Sequential()
+    model.add(Input(shape=(len(predictoras),)))
+
+    dropout_rate = trial.suggest_float(f'dropout_rate', 0.0, 0.2, step=0.1)
+    num_layers = trial.suggest_int('num_layers', 2, 3)
+    
+    for i in range(num_layers):
+        num_units = trial.suggest_int(f'n_units_layer_{i}', 8, 128)
+        if num_units:
+            model.add(Dense(num_units, activation='relu'))
+        if dropout_rate > 0.0:
+            model.add(Dropout(dropout_rate))
+
+    model.add(Dense(1, activation='sigmoid')) 
+
+    model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=[tf.keras.metrics.AUC(curve='PR', name='pr_auc')])
+
+    es_interno = EarlyStopping(monitor='val_pr_auc', mode='max', patience=10, verbose=0, restore_best_weights=True)
+
+    history = model.fit(
+        X_t, y_t,
+        validation_data=(X_v, y_v),
+        epochs=50,
+        batch_size=256, 
+        verbose=0, 
+        class_weight=class_weights_dict,
+        callbacks=[TFKerasPruningCallback(trial, "val_pr_auc"), es_interno]
+    )
+
+    y_pred_proba = model.predict(X_v)
+    mejor_f2 = 0.0
+    
+    for thresh in np.arange(0.1, 0.9, 0.01):
+        y_pred = (y_pred_proba > thresh).astype(int)
+
+        precision = precision_score(y_v, y_pred)
+        f2 = f2_score(y_v, y_pred)
+
+        if precision > 0.5:
+            mejor_f2 = max(f2, mejor_f2)
+    
+    return mejor_f2
+
+pruner = optuna.pruners.HyperbandPruner(min_resource=5, max_resource=50, reduction_factor=3)
+sampler = TPESampler(seed=42, n_startup_trials=20)
+ 
+study = optuna.create_study(direction='maximize', pruner=pruner, sampler=sampler)
+
+study.optimize(objective, n_trials=100, n_jobs=1)
+
+print("Mejores parámetros:", study.best_params)
+
+# %% [markdown]
+# Ahora reentrenamos usando la arquitectura óptima encontrada, usamos un conjunto de validación distinto (para verificar que el módelo generaliza) y mas chico (0.10) para extraer la mayor cantidad de información de los datos. Además subimos las épocas a 100 para permitir un entrenamiento más profundo en caso de que la red no se estanque (EarlyStopping sigue activo)
+
+# %%
+tf.keras.utils.set_random_seed(42) # Determinismo
+
+X_t, X_v, y_t, y_v = train_test_split(
+    x_train, y_train, 
+    test_size=0.10,
+    random_state=1,
+    stratify=y_train
+)
+
+# EarlyStop en caso de que no mejore el roc_auc en 10 epócas seguidas
+early_stop = callbacks.EarlyStopping(
+    monitor='val_pr_auc', 
+    patience=10, 
+    mode='max', 
+    restore_best_weights=True,
+    verbose=1
+)
+
+# Arquitectura resultante de aplicar hp-tuning con optuna
+model = Sequential([
+    Input(shape=(len(predictoras),)),
+    Dense(105, activation='relu'),
+    Dropout(0.1),
+    Dense(113, activation='relu'),
+    Dropout(0.1),
+    Dense(13, activation='relu'),
+    Dropout(0.1),
+    Dense(1, activation='sigmoid'),
+])
+
+model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=[tf.keras.metrics.AUC(curve='PR', name='pr_auc')])
+
+history = model.fit(
+    X_t, y_t,
+    validation_data=(X_v, y_v),
+    epochs=100,
+    batch_size=256,
+    callbacks=[early_stop],
+    class_weight=class_weights_dict, # Balanceo de clases
+    verbose=1,
+)
+
+# %%
+nn_hp_tuning = model
+
+# %%
+y_pred_proba = nn_hp_tuning.predict(x_test)
+y_pred = (y_pred_proba > 0.5).astype(int)
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Tuned 105/113/13')
+
+# %%
+graficar_matriz_confusion(y_test, y_pred,'NN Tuned 105/113/13')
+
+# %% [markdown]
+# El módelo presenta unas métricas equilibradamente buenas, pero estamos buscando maximizar el *F2-Score* tanto como sea posible siempre que la *Precision* sea > 0.5, vamos a buscar el umbral óptimo para este fin.
+
+# %%
+graficar_metricas_por_umbral(y_test, y_pred_proba, "NN")
+
+# %%
+# Evaluamos las métricas con el umbral óptimo F2.
+y_pred = (y_pred_proba > 0.36).astype(int)
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Tuned 105/113/13 Umbral F2')
+
+# %% [markdown]
+# Como la *Precision* obtenida usando el umbral óptimo para F2 no es mayor a 0.5 (restricción que nos impusimos). Buscamos el umbral que maximice F2 pero manteniendo *Precision > 0.5* 
+
+# %%
+y_pred = (y_pred_proba > 0.41).astype(int)
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Tuned 105/113/13 Umbral óptimo 0.41')
+
+# %%
+graficar_matriz_confusion(y_test, y_pred,'NN Tuned 105/113/13 Umbral óptimo 0.41')
+
+# %% [markdown]
+# Este módelo nos proporciona un *F2-score = 0.752* (máximizado por umbral F2), pero aún manteniendo la *Precision* por encima de 0.5 y con un *Acuraccy* general decente *Acuraccy = 0.773*. En síntesis es un modelo que tiende a ser "paranóico" (casi la mitad de las veces que predice que llueve se equivoca) pero robusto respecto a no tener falsos negativos (predijo correctamente más del 85% de los casos que realmente llovió) que es lo que buscábamos.
+
+# %% [markdown]
+# ### Optimización de umbral para el módelo de NN simple.
+# Vamos a analizar las métricas del módelo simple 16/8 aplicandole la optimización de umbral. Directamente buscamos el umbral con el mayor valor de *F2-score* pero manteniendo *Precision > 0.5*
+
+# %%
+y_pred_proba = nn_tipica.predict(x_test)
+
+mejor_umbral = 0
+mejor_f2 = 0
+
+for umbral in np.arange(0.1, 0.9, 0.01):
+    y_pred = (y_pred_proba > umbral).astype(int)
+
+    precision = precision_score(y_test, y_pred)
+    f2 = f2_score(y_test, y_pred)
+
+    if precision > 0.5:
+        if f2 > mejor_f2:
+            mejor_f2 = f2
+            mejor_umbral = umbral
+
+print(f"Mejor umbral para NN simple = {round(mejor_umbral, 3)}")
+
+# %%
+y_pred = (y_pred_proba > 0.4).astype(int)
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Simple 16/8 Umbtal óptimo 0.4')
+graficar_matriz_confusion(y_test, y_pred, 'NN Simple 16/8 Umbral óptimo 0.4')
