@@ -32,6 +32,7 @@ from sklearn.metrics import (
     f1_score,
     fbeta_score,
     precision_score,
+    average_precision_score,
     make_scorer,
     roc_auc_score,
     roc_curve,
@@ -2682,6 +2683,12 @@ print(shap_stats.head(10).to_string(index=False))
 variables_pycaret = predictoras.copy()
 variables_pycaret.append('RainTomorrow_dummy')
 
+
+# %%
+def pr_auc_score(y_true, y_pred_prob, **kwargs):
+    return average_precision_score(y_true, y_pred_prob, )
+
+
 # %%
 clasificacion = classification.setup(
     data = train[variables_pycaret],
@@ -2691,46 +2698,47 @@ clasificacion = classification.setup(
     normalize=False,
 )
 
+classification.set_config('seed', 42)
+
+classification.add_metric('pr_auc', 'PR AUC', pr_auc_score, target='pred_proba', multiclass=False)
+classification.add_metric('f2', 'F2-Score', f2_score, multiclass=False)
+
 # %%
 # Consideramos unicamente los módelos lineales para comparar con los nuestros.
 modelos_lineales = ['lr', 'ridge', 'lda', 'svm']
 
-# Nos quedamos con el mejor priorizando el Recall.
-best_model = classification.compare_models(include=modelos_lineales, sort='Recall')
+# Nos quedamos con el mejor priorizando el valor de PR_AUC, ya que será el que tenga un mayor F2-Score con el umbral correcto.
+best_model = classification.compare_models(include=modelos_lineales, sort='pr_auc')
 print(best_model)
 
 # %% [markdown]
-# El mejor módelo resulta ser **LinearDiscriminantAnalysis**, que presenta el mejor resultado tanto en *Recall* como en *F1*. Continuamos con el análisis en profundidad del modelo.
+# El mejor módelo resulta ser **Logistic Regression**, que presenta el mejor resultado de *PR-AUC* por lo que maximizará el valor de *F2-Score*, además es el modelo con mayor *AUC*, todo indica que es el mejor fit. No se puede evaluar el valor de *PR_AUC* para los modelos **Ridge Classifier** y **SVM** de pycaret ya que sus implementaciones no exponen las probabilidades predichas, por eso tienen valor 0.0
 
 # %%
 classification.evaluate_model(best_model)
 
 # %% [markdown]
-# En la sección *Class Report* observamos que el *recall* tiene un marcado desbalance entre clases. Es muy alto (0.94) para la clase mayoritaria (Predice con gran exactitud los días sin lluvia), mientras que solo predice correctamente la mitad de los días con lluvia (0.53). Naturalmente el mismo comportamiento se refleja en la métrica *F1*, aunque menos marcado.
-
-# %%
-predictions = classification.predict_model(best_model, data=test[variables_pycaret])
-
-# %%
-print("\nReporte de clasificación:")
-print(classification_report(y_test, predictions['prediction_label'], target_names=['No llueve', 'Llueve']))
-
-graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret LinearDiscriminantAnalysis')
+# En la sección *Class Report* observamos que el *recall* tiene un marcado desbalance entre clases. Es muy alto (0.94) para la clase mayoritaria (Predice con gran exactitud los días sin lluvia), mientras que solo predice correctamente la mitad de los días con lluvia (0.52). Vamos a optimizar el umbral.
 
 # %%
 classification.optimize_threshold(
     best_model,
-    optimize="Recall"
+    optimize="f2"
 )
 
-# %%
-predictions = classification.predict_model(best_model, data=test[variables_pycaret], probability_threshold=0.17)
+# %% [markdown]
+# Analizando el gráfico detectamos que si usamos el umbral óptimo para *F2-score* (0.125) la *Precisión* será muy baja, particularmente < 0.5 . Por lo que vamos a probar con un umbral de 0.2
 
 # %%
-print("\nReporte de clasificación:")
-print(classification_report(y_test, predictions['prediction_label'], target_names=['No llueve', 'Llueve']))
+predictions = classification.predict_model(best_model, data=test[variables_pycaret], probability_threshold=0.20)
+
+# %%
+print(evaluar_modelo(y_test, predictions['prediction_label'], predictions['prediction_score'], "Pycaret LogisticRegression umbral 0.2"))
 
 graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret LinearDiscriminantAnalysis')
+
+# %% [markdown]
+# El módelo con umbral = 0.2 reporta una gran mejora en las métricas que nos interesan. Tiene un *F2-Score = 0.722* y un *Recall = 0.802*, pero manteniendo *Precision = 0.514* .
 
 # %% [markdown]
 # # NN
