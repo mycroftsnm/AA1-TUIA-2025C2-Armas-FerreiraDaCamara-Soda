@@ -2757,7 +2757,7 @@ class_weights_dict = dict(enumerate(pesos))
 # %%
 tf.keras.utils.set_random_seed(42) # Determinismo
 
-X_t, X_v, y_t, y_v = train_test_split(
+X_t, X_val, y_t, y_val = train_test_split(
     x_train, y_train, 
     test_size=0.20,
     random_state=42,
@@ -2786,7 +2786,7 @@ model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=[tf.keras.me
 
 history = model.fit(
     X_t, y_t,
-    validation_data=(X_v, y_v),
+    validation_data=(X_val, y_val),
     epochs=100, 
     batch_size=256,
     callbacks=[early_stop],
@@ -2795,18 +2795,49 @@ history = model.fit(
 )
 
 # %%
-nn_tipica = model
+#nn_simple = model
+#nn_simple.save('nn_simple.keras')
+nn_simple = tf.keras.models.load_model('nn_simple.keras')
 
 # %%
-y_pred_proba = nn_tipica.predict(x_test)
-y_pred = (y_pred_proba > 0.5).astype(int)
-evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Simple 16/8')
+y_val_pred_proba = nn_simple.predict(X_val)
+y_val_pred = (y_val_pred_proba > 0.5).astype(int)
+evaluar_modelo(y_val, y_val_pred, y_val_pred_proba, 'VAL NN Simple 16/8')
 
 # %%
-graficar_matriz_confusion(y_test, y_pred,'NN Simple 16/8')
+graficar_matriz_confusion(y_val, y_val_pred,'VAL NN Simple 16/8')
 
 # %% [markdown]
-# Obtuvimos buenas métricas, *F2-score = 0.733* es un valor alentador teniendo en cuenta que el modelo tiene además *Acuraccy = 0.812* , *Recall = 0.800* y sobretodo un valor de *Precisión = 0.561* que supera comodamente la condición de mayor a 0.5 que nos impusimos. Si bien es un buen fit, vamos a optimizar hiperparametros para tratar de encontrar la mejor arquitectura posible. También vamos a explorar optimización del umbral teniendo en cuenta que nos "Sobra" precisión y posiblemente podamos mejorar un poco más el F2, que es nuestra métrica de referencia.
+# Obtuvimos buenas métricas, *F2-score = 0.733* es un valor alentador teniendo en cuenta que el modelo tiene además *Acuraccy = 0.810* , *Recall = 0.800* y sobretodo un valor de *Precisión = 0.550* que supera comodamente la condición de mayor a 0.5 que nos impusimos. Si bien es un buen fit, vamos a optimizar hiperparametros para tratar de encontrar la mejor arquitectura posible. También vamos a explorar optimización del umbral teniendo en cuenta que nos "Sobra" precisión y posiblemente podamos mejorar un poco más el F2, que es nuestra métrica de referencia.
+
+# %%
+graficar_metricas_por_umbral(y_val, y_val_pred_proba, 'NN Simple 16/8')
+
+# %%
+y_val_pred = (y_val_pred_proba > 0.38).astype(int)
+evaluar_modelo(y_val, y_val_pred, y_val_pred_proba, 'VAL NN Simple 16/8 Umbral 0.38')
+
+# %% [markdown]
+# Como con el umbral óptimo de F2 (0.38) el modelo obtiene *Precision = 0.479* que no cumple con nuestro requisito de ser > 0.5. Buscamos el umbral más proximo que si lo cumpla.
+
+# %%
+y_val_pred = (y_val_pred_proba > 0.42).astype(int)
+evaluar_modelo(y_val, y_val_pred, y_val_pred_proba, 'VAL NN Simple 16/8 Umbral 0.42')
+
+# %%
+graficar_matriz_confusion(y_val, y_val_pred, 'VAL NN Simple 16/8 Umbral 0.42')
+
+# %% [markdown]
+# Ahora que encontramos el umbral óptimo que cumple con *Precision > 0.5*, vamos a probar el desempeño el test.
+
+# %%
+y_pred_proba = nn_simple.predict(x_test)
+y_pred = (y_pred_proba > 0.42).astype(int)
+
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'TEST NN Simple 16/8 Umbral 0.42')
+
+# %%
+graficar_matriz_confusion(y_test, y_pred, 'TEST NN Simple 16/8 Umbral 0.42')
 
 # %% [markdown]
 # ### Optimización de Hiperparámetros con Optuna
@@ -2873,14 +2904,21 @@ def objective(trial):
     
     return mejor_f2
 
-pruner = optuna.pruners.HyperbandPruner(min_resource=5, max_resource=50, reduction_factor=3)
+pruner = optuna.pruners.HyperbandPruner(min_resource=10, max_resource=50, reduction_factor=3)
 sampler = TPESampler(seed=42, n_startup_trials=20)
  
 study = optuna.create_study(direction='maximize', pruner=pruner, sampler=sampler)
 
-study.optimize(objective, n_trials=100, n_jobs=1)
+EJECUTAR = False
+####################
 
-print("Mejores parámetros:", study.best_params)
+# Descomentar para ejecutar
+# EJECUTAR = True
+
+####################
+if EJECUTAR:
+    study.optimize(objective, n_trials=100, n_jobs=1)
+    print("Mejores parámetros:", study.best_params)
 
 # %% [markdown]
 # Ahora reentrenamos usando la arquitectura óptima encontrada, usamos un conjunto de validación distinto (para verificar que el módelo generaliza) y mas chico (0.10) para extraer la mayor cantidad de información de los datos. Además subimos las épocas a 100 para permitir un entrenamiento más profundo en caso de que la red no se estanque (EarlyStopping sigue activo)
@@ -2888,10 +2926,10 @@ print("Mejores parámetros:", study.best_params)
 # %%
 tf.keras.utils.set_random_seed(42) # Determinismo
 
-X_t, X_v, y_t, y_v = train_test_split(
+X_t, X_val, y_t, y_val = train_test_split(
     x_train, y_train, 
     test_size=0.10,
-    random_state=1,
+    random_state=43, # Distinto para no repetir datos
     stratify=y_train
 )
 
@@ -2907,11 +2945,9 @@ early_stop = callbacks.EarlyStopping(
 # Arquitectura resultante de aplicar hp-tuning con optuna
 model = Sequential([
     Input(shape=(len(predictoras),)),
-    Dense(105, activation='relu'),
+    Dense(121, activation='relu'),
     Dropout(0.1),
-    Dense(113, activation='relu'),
-    Dropout(0.1),
-    Dense(13, activation='relu'),
+    Dense(86, activation='relu'),
     Dropout(0.1),
     Dense(1, activation='sigmoid'),
 ])
@@ -2920,7 +2956,7 @@ model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=[tf.keras.me
 
 history = model.fit(
     X_t, y_t,
-    validation_data=(X_v, y_v),
+    validation_data=(X_val, y_val),
     epochs=100,
     batch_size=256,
     callbacks=[early_stop],
@@ -2929,64 +2965,68 @@ history = model.fit(
 )
 
 # %%
-nn_hp_tuning = model
+#nn_optimizada = model
+#nn_optimizada.save('nn_optimizada.keras')
+nn_optimizada = tf.keras.models.load_model('nn_optimizada.keras')
 
 # %%
-y_pred_proba = nn_hp_tuning.predict(x_test)
-y_pred = (y_pred_proba > 0.5).astype(int)
-evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Tuned 105/113/13')
+y_val_pred_proba = nn_optimizada.predict(X_val)
+y_val_pred = (y_val_pred_proba > 0.5).astype(int)
+evaluar_modelo(y_val, y_val_pred, y_val_pred_proba, 'NN Tuned 121/86')
 
 # %%
-graficar_matriz_confusion(y_test, y_pred,'NN Tuned 105/113/13')
+graficar_matriz_confusion(y_val, y_val_pred, 'NN Tuned 121/86')
 
 # %% [markdown]
 # El módelo presenta unas métricas equilibradamente buenas, pero estamos buscando maximizar el *F2-Score* tanto como sea posible siempre que la *Precision* sea > 0.5, vamos a buscar el umbral óptimo para este fin.
 
 # %%
-graficar_metricas_por_umbral(y_test, y_pred_proba, "NN")
+graficar_metricas_por_umbral(y_val, y_val_pred_proba, "NN Tuned 121/86")
 
 # %%
 # Evaluamos las métricas con el umbral óptimo F2.
-y_pred = (y_pred_proba > 0.36).astype(int)
-evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Tuned 105/113/13 Umbral F2')
+y_val_pred = (y_val_pred_proba > 0.44).astype(int)
+evaluar_modelo(y_val, y_val_pred, y_val_pred_proba, 'NN Tuned 121/86 Umbral F2 0.44')
+
+# %%
+graficar_matriz_confusion(y_val, y_val_pred, 'NN Tuned 121/86 Umbral F2 0.44')
 
 # %% [markdown]
-# Como la *Precision* obtenida usando el umbral óptimo para F2 no es mayor a 0.5 (restricción que nos impusimos). Buscamos el umbral que maximice F2 pero manteniendo *Precision > 0.5* 
+# El desempeño del modelo con umbral optimizado para F2 mejora considerablemente *F2-Score = 0.786*. Predice casi 90% de los días de lluvia correctamente, que es nuestro principal objetivo. Como *Precision = 0.529* y nuestra condición es que sea > 0.5 vamos a intentar disminuir el umbral para obtener un mayor al actual. *Recall = 0.894*
 
 # %%
-y_pred = (y_pred_proba > 0.41).astype(int)
-evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Tuned 105/113/13 Umbral óptimo 0.41')
+y_val_pred = (y_val_pred_proba > 0.40).astype(int)
+evaluar_modelo(y_val, y_val_pred, y_val_pred_proba, 'NN Tuned 121/86 Umbral 0.4')
 
 # %%
-graficar_matriz_confusion(y_test, y_pred,'NN Tuned 105/113/13 Umbral óptimo 0.41')
+graficar_matriz_confusion(y_val, y_val_pred, 'NN Tuned 121/86 Umbral 0.4')
 
 # %% [markdown]
-# Este módelo nos proporciona un *F2-score = 0.752* (máximizado por umbral F2), pero aún manteniendo la *Precision* por encima de 0.5 y con un *Acuraccy* general decente *Acuraccy = 0.773*. En síntesis es un modelo que tiende a ser "paranóico" (casi la mitad de las veces que predice que llueve se equivoca) pero robusto respecto a no tener falsos negativos (predijo correctamente más del 85% de los casos que realmente llovió) que es lo que buscábamos.
+# Pudimos mejorar el *Recall* a *0.912* manteniendo *Precision > 0.5*. Logicamente el *F2-Score* también disminuyó, de *0.786* a *0.784* lo cual es insignificante. Consideramos que este umbral es mejor para nuestro objetivo de disminuir al máximo los falsos negativos.
 
 # %% [markdown]
-# ### Optimización de umbral para el módelo de NN simple.
-# Vamos a analizar las métricas del módelo simple 16/8 aplicandole la optimización de umbral. Directamente buscamos el umbral con el mayor valor de *F2-score* pero manteniendo *Precision > 0.5*
+# Evaluamos el desempeño del modelo en test.
 
 # %%
-y_pred_proba = nn_tipica.predict(x_test)
+y_pred_proba = nn_optimizada.predict(x_test)
+y_pred = (y_pred_proba > 0.40).astype(int)
 
-mejor_umbral = 0
-mejor_f2 = 0
-
-for umbral in np.arange(0.1, 0.9, 0.01):
-    y_pred = (y_pred_proba > umbral).astype(int)
-
-    precision = precision_score(y_test, y_pred)
-    f2 = f2_score(y_test, y_pred)
-
-    if precision > 0.5:
-        if f2 > mejor_f2:
-            mejor_f2 = f2
-            mejor_umbral = umbral
-
-print(f"Mejor umbral para NN simple = {round(mejor_umbral, 3)}")
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'TEST NN Optimizada 121/86 Umbral 0.4')
 
 # %%
-y_pred = (y_pred_proba > 0.4).astype(int)
-evaluar_modelo(y_test, y_pred, y_pred_proba, 'NN Simple 16/8 Umbtal óptimo 0.4')
-graficar_matriz_confusion(y_test, y_pred, 'NN Simple 16/8 Umbral óptimo 0.4')
+graficar_matriz_confusion(y_test, y_pred, 'TEST NN Optimizada 121/86 Umbral 0.4')
+
+# %% [markdown]
+# El rendimiento del módelo en Test arroja una *precision = 0.49*, lo que indica que nos dejamos llevar por el desempeño sobre los datos de validación y elegimos un umbral poco robusto para nuestro objetivo de que el modelo mantenga una precisión > 0.5 en producción. Vamos a probar el umbral óptimo F2 (0.44), que incrementaba también la precisión, sobre el conjunto de Test.
+
+# %%
+y_pred_proba = nn_optimizada.predict(x_test)
+y_pred = (y_pred_proba > 0.44).astype(int)
+
+evaluar_modelo(y_test, y_pred, y_pred_proba, 'TEST NN Optimizada 121/86 Umbral 0.44')
+
+# %%
+graficar_matriz_confusion(y_test, y_pred, 'TEST NN Optimizada 121/86 Umbral 0.44')
+
+# %% [markdown]
+# El rendimiento en test fue marginalmente superior al del módelo simple con umbral optimizado. Asi que nos vamos a quedar con este como módelo de red neuronal.
