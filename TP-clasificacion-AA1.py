@@ -433,8 +433,7 @@ def imputar_features(df, features, df_test=None):
             media_climate_day = df.groupby(['Climate','Date'])[feature].mean()
             medianas_location = df.groupby('Location')[feature].median()
             media_climate = df.groupby(['Climate'])[feature].mean()
-        
-                
+            
         nan_rows = imputed_df[imputed_df[feature].isna()]
 
         for index, row in nan_rows.iterrows():
@@ -505,6 +504,9 @@ def imputar_features(df, features, df_test=None):
         print(f'Se imputaron {total_imputados} para la feature {feature}')
 
     return imputed_df
+
+
+# %%
 
 # %%
 variables_a_imputar = variables_numericas + ['WindDir9am', 'WindDir3pm', 'WindGustDir']
@@ -3084,8 +3086,8 @@ feature_eng_pipeline = Pipeline([
     ('wind_cyc', WindCyclicalTransformer(cols=cols_wind))
 ])
 
-# Pipeline Completo (Eng + Scaling/OHE)
-full_pipeline = Pipeline([
+# Pipeline FE + escalado
+pipeline = Pipeline([
     ('feature_engineering', feature_eng_pipeline),
     ('scale', ColumnTransformer([
         ('scaler', StandardScaler(), cols_to_scale),
@@ -3094,20 +3096,14 @@ full_pipeline = Pipeline([
 ])
 
 # Fitear el pipeline con los datos de train (para los scalers)
-full_pipeline.fit(x_train_clean)
-
-# Guardar el pipeline entrenado en un archivo
-joblib.dump(full_pipeline, 'pipeline.joblib')
+pipeline.fit(x_train_clean)
 
 
 # %%
-full_pipeline
+x_train_clean = pipeline.transform(x_train_clean)
 
 # %%
-x_train_clean = full_pipeline.transform(x_train_clean)
-
-# %%
-nombres_cols = full_pipeline.named_steps['scale'].get_feature_names_out()
+nombres_cols = pipeline.named_steps['scale'].get_feature_names_out()
 
 x_train_clean = pd.DataFrame(x_train_clean, columns=nombres_cols)
 
@@ -3118,3 +3114,96 @@ x_train.describe() # df generado durante el feature engineering / estandarizaci�
 
 # %% [markdown]
 # Podemos observar que los dataframes obtenidos son equivalentes y por lo tanto concluir que el pipeline de transformación es correcto.
+
+# %% [markdown]
+# ### Pipeline de imputación
+
+# %% [markdown]
+# Generamos un imputer para sklearn replicando la estrategía utilizada durante el entrenamiento, pero eliminando lós métodos que dependen de datos del mismo día, para poder correr en producción.
+
+# %%
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+
+class CustomImputer(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.wind_cols = ['WindDir9am', 'WindDir3pm', 'WindGustDir']
+        
+        self.maps_location_median_ = {} # Numéricas: Mediana Location
+        self.maps_climate_mean_ = {}    # Numéricas: Media Climate
+        self.maps_climate_mode_ = {}    # Categóricas: Moda Climate
+        
+        self.global_fallback_ = {} 
+
+    def fit(self, X, y=None):
+        df = X.copy()
+        
+        for col in variables_a_imputar:
+            if col in self.wind_cols:
+                self.maps_climate_mode_[col] = df.groupby('Climate')[col].apply(
+                    lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan
+                )
+                self.global_fallback_[col] = df[col].mode().iloc[0]
+            
+            else:
+                self.maps_location_median_[col] = df.groupby('Location')[col].median()                
+                self.maps_climate_mean_[col] = df.groupby('Climate')[col].mean()                
+                self.global_fallback_[col] = df[col].median()
+                
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        
+        for col in variables_a_imputar:
+            if X[col].isna().sum() == 0:
+                continue
+
+            if col in self.wind_cols:
+                # 1. Intenta imputar con valor de otra hora del mismo registro
+                others = [c for c in self.wind_cols if c != col]
+                for other_col in others:
+                    X[col] = X[col].fillna(X[other_col])
+                
+                # 2. Intenta imputar con moda histórica del tipo de clima
+                fallback_climate = X['Climate'].map(self.maps_climate_mode_[col])
+                X[col] = X[col].fillna(fallback_climate)
+                
+            else:
+                # 1. Intenta imputar por mediana histórica de la ubicación
+                fallback_location = X['Location'].map(self.maps_location_median_[col])
+                X[col] = X[col].fillna(fallback_location)
+                
+                # 2. Intenta imputar por media histórica del tipo de clima
+                fallback_climate = X['Climate'].map(self.maps_climate_mean_[col])
+                X[col] = X[col].fillna(fallback_climate)
+                
+                # Redondeo para mantener en octas
+                if col in ['Cloud9am', 'Cloud3pm']:
+                    X[col] = X[col].round()
+
+        return X
+
+
+# %%
+df_clean = pd.read_csv('weatherAUS.csv')
+train_clean, _ = train_test_split(df, test_size=0.2, random_state=1)
+x_train_clean = train_clean.drop('RainTomorrow', axis=1)
+
+# %%
+pipeline_completo = Pipeline([
+    ('imputer', CustomImputer()),
+    ('fe-scaler', pipeline)
+    ])
+
+# %% [markdown]
+# Unimos el pipeline de imputación con el pipeline de feature engineering y escalado.
+
+# %%
+pipeline_completo.fit(x_train_clean)
+
+# %%
+# Dumpeamos el pipeline completo para usarlo en docker
+
+joblib.dump(pipeline_completo, 'pipeline.joblib')
