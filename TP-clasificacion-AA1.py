@@ -2374,7 +2374,7 @@ print(resumen_umbrales.to_string(index=False))
 # Para optimizar el umbral de clasificación, investigamos el índice J de Youden. Esta métrica, al igual F1-Score en su objetivo de encontrar un umbral óptimo, se enfoca específicamente en maximizar el equilibrio entre la Sensibilidad (Recall) y la Especificidad. El umbral resultante es aquel que maximiza la fórmula $(Sensibilidad + Especificidad - 1)$, identificando así el punto de corte que ofrece el mejor balance. Esto nos permitió lograr un notable Recall (alta detección de positivos) sin sacrificar de manera desproporcionada la Especificidad (la correcta detección de negativos).
 
 # %% [markdown]
-# # MLOPS
+# # Comparación de modelos y ajuste fino
 
 # %% [markdown]
 # ## Modelo Base
@@ -2741,7 +2741,7 @@ graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret Line
 # El módelo con umbral = 0.2 reporta una gran mejora en las métricas que nos interesan. Tiene un *F2-Score = 0.722* y un *Recall = 0.802*, pero manteniendo *Precision = 0.514* .
 
 # %% [markdown]
-# # NN
+# # Redes Neuronales
 
 # %%
 from tensorflow.keras import * 
@@ -3038,3 +3038,83 @@ graficar_matriz_confusion(y_test, y_pred, 'TEST NN Optimizada 121/86 Umbral 0.44
 
 # %% [markdown]
 # El rendimiento en test fue marginalmente superior al del módelo simple con umbral optimizado. Asi que nos vamos a quedar con este como módelo de red neuronal.
+
+# %% [markdown]
+# # MLOPS
+
+# %% [markdown]
+# Implementamos un pipeline para replicar las transformaciones aplicadas durante el feature engineering, comparando que el resultado obtenido sea el mismo. Generamos funciones de transformación propias compatibles con Sklearn.pipeline en el archivo *custom_transformers.py*
+
+# %%
+# Generamos un df x_train_clean a partir del df original imputado (antes del feature engineering)
+
+x_train_clean = train_imputed.drop('RainTomorrow', axis=1)
+
+# %%
+import joblib
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer 
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from custom_transformers import (ClimateTransformer, RainySeasonTransformer,
+                          LogTransformer, TempDiffTransformer, 
+                          CloudScalerTransformer, WindCyclicalTransformer)
+
+cols_log = ['Rainfall', 'Evaporation']
+cols_wind = ['WindDir9am', 'WindDir3pm', 'WindGustDir']
+
+cols_to_scale = [
+    'Rainfall_log', 'Evaporation_log', 'Sunshine', 
+    'MinTemp', 'TempDiff', 
+    'Humidity9am', 'Humidity3pm', 
+    'Pressure9am', 'Pressure3pm', 
+    'WindSpeed9am', 'WindSpeed3pm', 'WindGustSpeed'
+]
+
+# Agrega dinámicamente las variables de viento encodeadas sin/cos
+for col in cols_wind:
+    cols_to_scale.extend([f'{col}_sin', f'{col}_cos'])
+
+# Pipeline de Feature Engineering
+feature_eng_pipeline = Pipeline([
+    ('climate', ClimateTransformer()),
+    ('season', RainySeasonTransformer()),
+    ('log', LogTransformer(cols=cols_log)),
+    ('temp_diff', TempDiffTransformer()),
+    ('cloud_scale', CloudScalerTransformer()),
+    ('wind_cyc', WindCyclicalTransformer(cols=cols_wind))
+])
+
+# Pipeline Completo (Eng + Scaling/OHE)
+full_pipeline = Pipeline([
+    ('feature_engineering', feature_eng_pipeline),
+    ('scale', ColumnTransformer([
+        ('scaler', StandardScaler(), cols_to_scale),
+        ('pass', 'passthrough', ['Cloud9am', 'Cloud3pm', 'RainySeason', 'ClimateArid', 'ClimateTropical'])
+    ], verbose_feature_names_out=False))
+])
+
+# Fitear el pipeline con los datos de train (para los scalers)
+full_pipeline.fit(x_train_clean)
+
+# Guardar el pipeline entrenado en un archivo
+joblib.dump(full_pipeline, 'pipeline.joblib')
+
+
+# %%
+full_pipeline
+
+# %%
+x_train_clean = full_pipeline.transform(x_train_clean)
+
+# %%
+nombres_cols = full_pipeline.named_steps['scale'].get_feature_names_out()
+
+x_train_clean = pd.DataFrame(x_train_clean, columns=nombres_cols)
+
+pd.DataFrame(x_train_clean).describe() # df generado aplicando el pipeline
+
+# %%
+x_train.describe() # df generado durante el feature engineering / estandarización
+
+# %% [markdown]
+# Podemos observar que los dataframes obtenidos son equivalentes y por lo tanto concluir que el pipeline de transformación es correcto.
