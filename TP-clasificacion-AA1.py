@@ -6,9 +6,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.17.3
 #   kernelspec:
-#     display_name: aa
+#     display_name: venv_aa
 #     language: python
 #     name: python3
 # ---
@@ -45,6 +45,20 @@ from imblearn.over_sampling import RandomOverSampler, SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 
 from pycaret import classification
+
+import joblib
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer 
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from custom_transformers import (ClimateTransformer, RainySeasonTransformer,
+                          LogTransformer, TempDiffTransformer, 
+                          CloudScalerTransformer, WindCyclicalTransformer)
+
+from tensorflow.keras import * 
+from tensorflow.keras.layers import *
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+import tensorflow as tf
 
 # %%
 # Carga el dataset en un dataframe
@@ -505,8 +519,6 @@ def imputar_features(df, features, df_test=None):
 
     return imputed_df
 
-
-# %%
 
 # %%
 variables_a_imputar = variables_numericas + ['WindDir9am', 'WindDir3pm', 'WindGustDir']
@@ -2746,13 +2758,6 @@ graficar_matriz_confusion(y_test, predictions['prediction_label'], 'Pycaret Line
 # # Redes Neuronales
 
 # %%
-from tensorflow.keras import * 
-from tensorflow.keras.layers import *
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
-import tensorflow as tf
-
-# %%
 from sklearn.utils.class_weight import compute_class_weight
 
 pesos = compute_class_weight(
@@ -3053,14 +3058,6 @@ graficar_matriz_confusion(y_test, y_pred, 'TEST NN Optimizada 121/86 Umbral 0.44
 x_train_clean = train_imputed.drop('RainTomorrow', axis=1)
 
 # %%
-import joblib
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer 
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from custom_transformers import (ClimateTransformer, RainySeasonTransformer,
-                          LogTransformer, TempDiffTransformer, 
-                          CloudScalerTransformer, WindCyclicalTransformer)
-
 cols_log = ['Rainfall', 'Evaporation']
 cols_wind = ['WindDir9am', 'WindDir3pm', 'WindGustDir']
 
@@ -3095,11 +3092,11 @@ pipeline = Pipeline([
     ], verbose_feature_names_out=False))
 ])
 
+
+# %%
 # Fitear el pipeline con los datos de train (para los scalers)
 pipeline.fit(x_train_clean)
 
-
-# %%
 x_train_clean = pipeline.transform(x_train_clean)
 
 # %%
@@ -3122,88 +3119,45 @@ x_train.describe() # df generado durante el feature engineering / estandarizaci�
 # Generamos un imputer para sklearn replicando la estrategía utilizada durante el entrenamiento, pero eliminando lós métodos que dependen de datos del mismo día, para poder correr en producción.
 
 # %%
-import pandas as pd
-import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
-
-class CustomImputer(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        self.wind_cols = ['WindDir9am', 'WindDir3pm', 'WindGustDir']
-        
-        self.maps_location_median_ = {} # Numéricas: Mediana Location
-        self.maps_climate_mean_ = {}    # Numéricas: Media Climate
-        self.maps_climate_mode_ = {}    # Categóricas: Moda Climate
-        
-        self.global_fallback_ = {} 
-
-    def fit(self, X, y=None):
-        df = X.copy()
-        
-        for col in variables_a_imputar:
-            if col in self.wind_cols:
-                self.maps_climate_mode_[col] = df.groupby('Climate')[col].apply(
-                    lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan
-                )
-                self.global_fallback_[col] = df[col].mode().iloc[0]
-            
-            else:
-                self.maps_location_median_[col] = df.groupby('Location')[col].median()                
-                self.maps_climate_mean_[col] = df.groupby('Climate')[col].mean()                
-                self.global_fallback_[col] = df[col].median()
-                
-        return self
-
-    def transform(self, X):
-        X = X.copy()
-        
-        for col in variables_a_imputar:
-            if X[col].isna().sum() == 0:
-                continue
-
-            if col in self.wind_cols:
-                # 1. Intenta imputar con valor de otra hora del mismo registro
-                others = [c for c in self.wind_cols if c != col]
-                for other_col in others:
-                    X[col] = X[col].fillna(X[other_col])
-                
-                # 2. Intenta imputar con moda histórica del tipo de clima
-                fallback_climate = X['Climate'].map(self.maps_climate_mode_[col])
-                X[col] = X[col].fillna(fallback_climate)
-                
-            else:
-                # 1. Intenta imputar por mediana histórica de la ubicación
-                fallback_location = X['Location'].map(self.maps_location_median_[col])
-                X[col] = X[col].fillna(fallback_location)
-                
-                # 2. Intenta imputar por media histórica del tipo de clima
-                fallback_climate = X['Climate'].map(self.maps_climate_mean_[col])
-                X[col] = X[col].fillna(fallback_climate)
-                
-                # Redondeo para mantener en octas
-                if col in ['Cloud9am', 'Cloud3pm']:
-                    X[col] = X[col].round()
-
-        return X
-
+from custom_imputer import CustomImputer
 
 # %%
 df_clean = pd.read_csv('weatherAUS.csv')
-train_clean, _ = train_test_split(df, test_size=0.2, random_state=1)
+train_clean, _ = train_test_split(df_clean, test_size=0.2, random_state=1)
 x_train_clean = train_clean.drop('RainTomorrow', axis=1)
 
 # %%
-pipeline_completo = Pipeline([
-    ('imputer', CustomImputer()),
-    ('fe-scaler', pipeline)
-    ])
+# Redefine el pipeline para sacar a ClimateTransformer ya que
+# necesitamos la variable Climate generada para hacer la imputación.
 
-# %% [markdown]
-# Unimos el pipeline de imputación con el pipeline de feature engineering y escalado.
+feature_eng_pipeline = Pipeline([
+    ('season', RainySeasonTransformer()),
+    ('log', LogTransformer(cols=cols_log)),
+    ('temp_diff', TempDiffTransformer()),
+    ('cloud_scale', CloudScalerTransformer()),
+    ('wind_cyc', WindCyclicalTransformer(cols=cols_wind))
+])
+
+fe_scaling_pipeline = Pipeline([
+    ('feature_engineering', feature_eng_pipeline),
+    ('scale', ColumnTransformer([
+        ('scaler', StandardScaler(), cols_to_scale),
+        ('pass', 'passthrough', ['Cloud9am', 'Cloud3pm', 'RainySeason', 'ClimateArid', 'ClimateTropical'])
+    ], verbose_feature_names_out=False))
+])
+
+pipeline_completo = Pipeline([
+    ('climate', ClimateTransformer()),
+    ('imputer', CustomImputer()),
+    ('fe-scaler', fe_scaling_pipeline)
+    ])
 
 # %%
 pipeline_completo.fit(x_train_clean)
 
 # %%
 # Dumpeamos el pipeline completo para usarlo en docker
-
 joblib.dump(pipeline_completo, 'pipeline.joblib')
+
+# Dumpeamos el orden exacto de columnas que Keras espera recibir
+joblib.dump(x_test.columns.to_list(), 'features_order.joblib')
