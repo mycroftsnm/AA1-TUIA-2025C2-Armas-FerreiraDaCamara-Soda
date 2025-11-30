@@ -3544,6 +3544,17 @@ print(shap_stats.head(10).to_string(index=False))
 # por qué ambos modelos convergen al mismo ranking de importancia.
 
 # %% [markdown]
+# ## Comparación de modelos
+resultados_nn_optimizada = evaluar_modelo(y_test, y_pred, y_pred_proba, 'TEST NN Optimizada 121/86 Umbral 0.44')
+mejor_lr = df_resultados_opt_youden[df_resultados_opt_youden['Modelo'] == 'Random Over-Sampling'].iloc[0].to_dict()
+comparativa_final = pd.DataFrame([mejor_lr, resultados_nn_optimizada])
+
+plt.figure(figsize=(10, 6))
+sns.barplot(data=comparativa_final, x='Modelo', y='F2-Score', palette='muted')
+plt.title('Comparación Final F2-Score: LR vs NN')
+plt.show()
+
+# %% [markdown]
 # # MLOPS
 
 # %% [markdown]
