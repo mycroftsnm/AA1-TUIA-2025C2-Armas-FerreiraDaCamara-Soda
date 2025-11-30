@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 #   kernelspec:
 #     display_name: venv_aa
 #     language: python
@@ -3057,10 +3057,10 @@ graficar_matriz_confusion(y_test, y_pred, 'TEST NN Optimizada 121/86 Umbral 0.44
 # %% [markdown]
 # Creamos el explainer SHAP para redes neuronales
 # Para redes neuronales usamos DeepExplainer
-
+#
 # Tomamos una muestra del conjunto de entrenamiento como background data
 # Es importante convertir a numpy array para evitar errores de formato
-#%%
+# %%
 background = X_t[:100].values if hasattr(X_t, 'values') else X_t[:100]
 
 explainer = shap.DeepExplainer(nn_optimizada, background)
@@ -3503,38 +3503,38 @@ print(shap_stats.head(10).to_string(index=False))
 # mantiene consistente, confirmando que ambos modelos identifican las mismas variables como críticas 
 # para la predicción de lluvia.
 # %% [markdown]
-
+#
 # ### Comparación con Regresión Logística
-# 
+#
 # **Resumen:**
-# 
+#
 # **1. Ranking de importancia - Consistencia notable:**
-# 
+#
 # Ambos modelos identifican las mismas tres variables como más importantes:
 # - **Pressure3pm**: #1 en ambos (NN: 0.147 | RL: 1.107)
 # - **Humidity3pm**: #2 en ambos (NN: 0.132 | RL: 0.960)
 # - **Pressure9am**: #3 en ambos (NN: 0.096 | RL: 0.823)
-# 
+#
 # El top 5 también es idéntico: las tres anteriores más WindGustSpeed (#4) y Sunshine (#5), confirmando 
 # que las condiciones atmosféricas de presión y humedad son los predictores fundamentales independientemente 
 # de la arquitectura del modelo.
 #
 # **2. Magnitud de impacto - Diferencias de escala:**
-# 
+#
 # Los valores SHAP de la regresión logística son **7-10 veces mayores** que los de la red neuronal (ej: 
 # Pressure3pm 1.11 vs 0.15). Esto es esperado: la RL trabaja en escala logit y tiene una relación lineal 
 # directa entre features y predicción, mientras que la NN distribuye el impacto a través de múltiples capas 
 # y activaciones no lineales. Las **proporciones relativas** se mantienen, lo importante es el ranking.
 #
 # **3. Patrones de interacción - Capacidad de la NN:**
-# 
+#
 # El beeswarm plot de la NN muestra relaciones más complejas que la RL, especialmente en variables secundarias 
 # como WindGustSpeed y MinTemp, donde la NN captura efectos bidireccionales más matizados. Sin embargo, 
 # para las variables principales (Pressure3pm, Humidity3pm), ambos modelos muestran patrones similares, 
 # sugiriendo que estas relaciones son fundamentalmente lineales o monotónicas.
 #
 # **4. Aciertos vs errores - Patrones similares:**
-# 
+#
 # Tanto en NN como en RL, las predicciones incorrectas muestran mayor dependencia de Pressure3pm y 
 # WindGustSpeed, indicando que condiciones atmosféricas ambiguas confunden a ambos modelos de manera similar.
 #
@@ -3545,14 +3545,14 @@ print(shap_stats.head(10).to_string(index=False))
 
 # %% [markdown]
 # ## Comparación de modelos
-resultados_nn_optimizada = evaluar_modelo(y_test, y_pred, y_pred_proba, 'TEST NN Optimizada 121/86 Umbral 0.44')
-mejor_lr = df_resultados_opt_youden[df_resultados_opt_youden['Modelo'] == 'Random Over-Sampling'].iloc[0].to_dict()
-comparativa_final = pd.DataFrame([mejor_lr, resultados_nn_optimizada])
-
-plt.figure(figsize=(10, 6))
-sns.barplot(data=comparativa_final, x='Modelo', y='F2-Score', palette='muted')
-plt.title('Comparación Final F2-Score: LR vs NN')
-plt.show()
+# resultados_nn_optimizada = evaluar_modelo(y_test, y_pred, y_pred_proba, 'TEST NN Optimizada 121/86 Umbral 0.44')
+# mejor_lr = df_resultados_opt_youden[df_resultados_opt_youden['Modelo'] == 'Random Over-Sampling'].iloc[0].to_dict()
+# comparativa_final = pd.DataFrame([mejor_lr, resultados_nn_optimizada])
+#
+# plt.figure(figsize=(10, 6))
+# sns.barplot(data=comparativa_final, x='Modelo', y='F2-Score', palette='muted')
+# plt.title('Comparación Final F2-Score: LR vs NN')
+# plt.show()
 
 # %% [markdown]
 # # MLOPS
