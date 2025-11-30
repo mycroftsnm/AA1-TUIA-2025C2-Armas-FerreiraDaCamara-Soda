@@ -3047,6 +3047,503 @@ graficar_matriz_confusion(y_test, y_pred, 'TEST NN Optimizada 121/86 Umbral 0.44
 # El rendimiento en test fue marginalmente superior al del módelo simple con umbral optimizado. Asi que nos vamos a quedar con este como módelo de red neuronal.
 
 # %% [markdown]
+# ### SHAP para Red Neuronal Optimizada
+# Aplicamos SHAP al modelo de red neuronal final (arquitectura 121/86 con umbral 0.44),
+# que fue el modelo que obtuvo las mejores métricas basándose en F2-Score.
+
+# %% [markdown]
+# ### Interpretación local
+
+# %% [markdown]
+# Creamos el explainer SHAP para redes neuronales
+# Para redes neuronales usamos DeepExplainer
+
+# Tomamos una muestra del conjunto de entrenamiento como background data
+# Es importante convertir a numpy array para evitar errores de formato
+#%%
+background = X_t[:100].values if hasattr(X_t, 'values') else X_t[:100]
+
+explainer = shap.DeepExplainer(nn_optimizada, background)
+
+# %%
+# Calculamos SHAP values para el conjunto de test
+x_test_array = x_test[:1000].values if hasattr(x_test, 'values') else x_test[:1000]
+shap_values = explainer.shap_values(x_test_array)  # Primeras 1000 obs para eficiencia
+
+# si hsap_values es una lista tomamos el primer elemento
+if isinstance(shap_values, list):
+    shap_values = shap_values[0]
+
+# %% [markdown]
+# #### Análisis de observaciones individuales
+# Para redes neuronales, usamos waterfall plots en lugar de force plots
+
+# %%
+index = 219
+
+# shap_values puede ser 2D (muestras, features) o 3D (muestras, features, 1)
+if len(shap_values.shape) == 3:
+    shap_vals_for_plot = shap_values[index, :, 0]
+else:
+    shap_vals_for_plot = shap_values[index]
+
+# Obtener expected_value
+if isinstance(explainer.expected_value, np.ndarray):
+    expected_val = explainer.expected_value[0] if len(explainer.expected_value.shape) > 0 else float(explainer.expected_value)
+else:
+    expected_val = float(explainer.expected_value)
+
+# Crear explanation para visualizacion
+explanation = shap.Explanation(values=shap_vals_for_plot,
+                               base_values=expected_val,
+                               data=x_test.iloc[index].values,
+                               feature_names=predictoras)
+
+# waterfall plot
+shap.plots.waterfall(explanation)
+
+# Información de la observación
+print(f"\nINFORMACIÓN DE LA OBSERVACIÓN {index}")
+print(f"Valor real: {'Llueve' if y_test.iloc[index] == 1 else 'No llueve'}")
+print(f"Probabilidad predicha: {y_pred_proba[index][0]:.4f}")
+
+# Umbral optimizado F2
+umbral_opt = 0.44
+pred_opt = 1 if y_pred_proba[index][0] >= umbral_opt else 0
+print(f"Predicción (umbral optimizado F2 {umbral_opt}): {'Llueve' if pred_opt == 1 else 'No llueve'}")
+print(f"Valor base (E[f(X)]): {expected_val:.4f}")
+print(f"Predicción final f(x): {expected_val + shap_vals_for_plot.sum():.4f}")
+
+# %% [markdown]
+# Del gráfico waterfall observamos cómo las diferentes variables meteorológicas empujan la predicción 
+# hacia "Llueve" o "No llueve" desde el valor base, y poe consiguiente, identificar qué variables son las más determinantes para
+# esta predicción específica. La red neuronal captura interacciones más complejas 
+# que la regresión logística, lo que puede reflejarse en patrones SHAP diferentes. Se observa también que las mismas variables
+# atmosféricas son las dominantes para la red neuroanl:
+#
+# En la observación 219, el modelo predice correctamente lluvia con 92.57% de probabilidad. Las variables 
+# más determinantes son Humidity3pm (+0.36), Pressure3pm (+0.14) y Sunshine (+0.10), todas empujando 
+# fuertemente hacia la clase "Llueve". El valor base de 0.336 se incrementa casi 60 puntos porcentuales 
+# principalmente por estas tres variables atmosféricas de la tarde, confirmando que las condiciones de 
+# humedad alta, presión baja y poco sol son indicadores clave para la predicción de lluvia.
+
+# %% [markdown]
+# #### Waterfall plot con una observación (sample) distinta
+
+# %%
+index = 500 #elegido arbitrariamente
+
+if len(shap_values.shape) == 3:
+    shap_vals_obs = shap_values[index, :, 0]
+else:
+    shap_vals_obs = shap_values[index]
+
+#objeto Explanation
+explanation = shap.Explanation(values=shap_vals_obs,
+                               base_values=expected_val,
+                               data=x_test.iloc[index].values,
+                               feature_names=predictoras)
+
+# Visualiza
+shap.plots.waterfall(explanation)
+
+# Información extra
+print(f"\nANÁLISIS DE LA OBSERVACIÓN {index}")
+print(f"Valor base (E[f(X)]): {expected_val:.4f}")
+print(f"Predicción final f(x): {expected_val + shap_vals_obs.sum():.4f}")
+print(f"Probabilidad predicha: {y_pred_proba[index][0]:.4f}")
+print(f"Valor real: {'Llueve' if y_test.iloc[index] == 1 else 'No llueve'}")
+print(f"Predicción (umbral óptimo {umbral_opt}): {'Llueve' if (y_pred_proba[index][0] >= umbral_opt) else 'No llueve'}")
+
+# %% [markdown]
+#
+# Para la observación 500 (elegida arbitrariamente), el modelo predice lluvia con 53.87% de probabilidad,
+# apenas por encima del umbral optimizado (0.44), resultando en una predicción correcta pero con baja
+# confianza. Aquí, Pressure3pm domina con +0.26 de contribución, mientras que Pressure9am (-0.13) reduce
+# la predicción. Este caso muestra un escenario más ambiguo donde las señales meteorológicas son mixtas:
+# presión muy baja en la tarde favorece lluvia, pero otras variables como WindGustSpeed (-0.05) y
+# RainySeason (-0.02) empujan levemente hacia "No llueve". La predicción final de 0.539 refleja esta
+# incertidumbre, siendo un ejemplo de caso límite donde el modelo está menos seguro.
+
+# %% [markdown]
+# #### Observación de casos particulares
+# Analizamos casos extremos: FP y TP con mayor confianza, y predicciones cercanas al umbral.
+
+# %%
+# Encuentra las predicciones más interesantes
+y_pred_opt_nn = (y_pred_proba[:1000] >= umbral_opt).astype(int).flatten()
+y_test_subset = y_test.iloc[:1000].values
+
+print("CASOS MÁS INTERESANTES PARA ANALIZAR")
+
+# Verdaderos Positivos más confiantes
+tp_mask = (y_pred_opt_nn == 1) & (y_test_subset == 1)
+if tp_mask.sum() > 0:
+    tp_probs = y_pred_proba[:1000][tp_mask]
+    idx_tp_max = np.where(tp_mask)[0][np.argmax(tp_probs)]
+    print(f"\n1. TP más confiante (índice {idx_tp_max}): prob = {y_pred_proba[idx_tp_max][0]:.4f}")
+else:
+    idx_tp_max = None
+
+# Falsos Positivos más confiantes
+fp_mask = (y_pred_opt_nn == 1) & (y_test_subset == 0)
+if fp_mask.sum() > 0:
+    fp_probs = y_pred_proba[:1000][fp_mask]
+    idx_fp_max = np.where(fp_mask)[0][np.argmax(fp_probs)]
+    print(f"2. FP más confiante (índice {idx_fp_max}): prob = {y_pred_proba[idx_fp_max][0]:.4f}")
+else:
+    idx_fp_max = None
+
+# Predicción más cercana al umbral
+diff_umbral = np.abs(y_pred_proba[:1000].flatten() - umbral_opt)
+idx_cercano = np.argmin(diff_umbral)
+print(f"3. Predicción más cercana al umbral (índice {idx_cercano}): prob = {y_pred_proba[idx_cercano][0]:.4f}")
+
+# Visualizar casos especiales
+casos_especiales = [idx_tp_max, idx_fp_max, idx_cercano]
+titulos = ['TP más confiante', 'FP más confiante', 'Caso cercano al umbral']
+
+for i, (idx, titulo) in enumerate(zip(casos_especiales, titulos), 1):
+    if idx is not None:
+        # Extraer SHAP values correctamente
+        if len(shap_values.shape) == 3:
+            shap_vals_obs = shap_values[idx, :, 0]
+        else:
+            shap_vals_obs = shap_values[idx]
+            
+        explanation = shap.Explanation(values=shap_vals_obs,
+                                       base_values=expected_val,
+                                       data=x_test.iloc[idx].values,
+                                       feature_names=predictoras)
+        
+        fig = plt.figure(figsize=(10, 8))
+        shap.plots.waterfall(explanation, show=False)
+        plt.title(f'{titulo} - Observación {idx}', 
+                  fontsize=14, fontweight='bold', pad=20)
+        plt.tight_layout()
+        plt.show()
+# %% [markdown]
+# ### Análisis de Casos Extremos
+#
+# **1. TP más confiante (Observación 253 - prob = 0.9969):**
+# Este es un verdadero positivo con máxima confianza. Las variables clave son Humidity3pm (+0.28) y 
+# Pressure3pm (+0.25), ambas con valores extremos (2.094 y -2.199 respectivamente) que señalan 
+# condiciones atmosféricas muy favorables para lluvia. La combinación de humedad muy alta y presión 
+# muy baja resulta en una predicción casi perfecta (99.69%). Sunshine negativo (+0.06) y WindGustSpeed 
+# alto (+0.05) refuerzan la predicción. El modelo muestra certeza alta cuando las variables 
+# atmosféricas presentan valores extremos que también son coherentes.
+#
+# **2. FP más confiante (Observación 197 - prob = 0.9950):**
+# Este falso positivo revela una debilidad del modelo. Humidity3pm extremadamente alta (2.287) aporta 
+# +0.33, dominando completamente la predicción. Pressure3pm (-1.117, +0.14), Sunshine bajo (+0.08) y 
+# Rainfall_log (+0.06) refuerzan la señal de lluvia. Sin embargo, el modelo **se equivoca** porque 
+# confía excesivamente en la humedad sin considerar suficientemente otros factores. Interesantemente, 
+# Pressure9am (-0.06) y WindGustSpeed (-0.02) aportan señales negativas débiles que fueron ignoradas. 
+# Este caso ilustra que humedad extrema puede generar falsos positivos.
+#
+# **3. Caso cercano al umbral (Observación 884 - prob = 0.4413):**
+# Esta predicción está a solo 0.001 del umbral optimizado (0.44), representando máxima incertidumbre. 
+# Las variables empujan en direcciones opuestas: WindGustSpeed (+0.08), Sunshine bajo (+0.07) y TempDiff 
+# (+0.05) favorecen lluvia, mientras que WindSpeed9am (-0.03), Humidity3pm (-0.03), Pressure9am (-0.03) 
+# y WindDir3pm_sin (-0.03) empujan hacia "No llueve". Con una probabilidad de 44.13%, el modelo está 
+# prácticamente en el límite de la decisión, reflejando que las señales meteorológicas son 
+# contradictorias y ambiguas para este día específico. Ninguna aporta considerablemnte a la predicción.
+# %% [markdown]
+# ### Interpretación global
+# Analizamos la influencia global de las variables en las predicciones de la red neuronal.
+
+# %%
+# Crear explanation global
+# Ajustar shap_values para que sea 2D
+if len(shap_values.shape) == 3:
+    shap_values_2d = shap_values[:, :, 0]
+else:
+    shap_values_2d = shap_values
+
+# Asegurar que expected_value es escalar
+if isinstance(explainer.expected_value, np.ndarray):
+    expected_val_scalar = explainer.expected_value[0] if len(explainer.expected_value.shape) > 0 else float(explainer.expected_value)
+else:
+    expected_val_scalar = float(explainer.expected_value)
+
+# Para explanation_global, base_values debe ser un array del mismo tamaño que las muestras
+base_values_array = np.full(shap_values_2d.shape[0], expected_val_scalar)
+
+explanation_global = shap.Explanation(values=shap_values_2d, 
+                                     base_values=base_values_array, 
+                                     feature_names=predictoras, 
+                                     data=x_test.iloc[:1000].values)
+
+print(f"Explanation creada con {explanation_global.shape[0]} observaciones y {explanation_global.shape[1]} features")
+
+# %%
+# Bar plot: importancia promedio absoluta de cada feature
+print("IMPORTANCIA GLOBAL DE FEATURES (Mean Absolute SHAP)")
+
+shap.plots.bar(explanation_global, max_display=15, show=False)
+plt.title('Importancia Global de Features - Red Neuronal Optimizada', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# #### Importancia Global en la Red Neuronal
+#
+# El gráfico de barras muestra el **impacto promedio absoluto** de cada feature en las predicciones del modelo.
+#
+# **Variables más influyentes:**
+#
+# 1. **Pressure3pm** (+0.15) - La presión atmosférica de la tarde es el predictor más importante
+# 2. **Humidity3pm** (+0.13) - La humedad de la tarde es el segundo predictor más relevante  
+# 3. **Pressure9am** (+0.10) - La presión de la mañana completa el top 3
+#
+# **Observaciones clave:**
+#
+# - Las **variables de la tarde** (3pm) dominan claramente, con Pressure3pm y Humidity3pm liderando el ranking
+# - Las **condiciones atmosféricas** (presión y humedad) son mucho más determinantes que otras variables meteorológicas
+# - **WindGustSpeed** (+0.05) y **Sunshine** (+0.05) tienen importancia moderada
+# - Variables como temperatura (MinTemp, TempDiff), nubosidad (Cloud3pm) y lluvia en el día (Rainfall_log) tienen impacto menor (+0.02-0.03)
+# - Variables de clima regional (ClimateTropical) y direcciones de viento codificadas tienen impacto mínimo (+0.01-0.02)
+#
+# Este ranking es consistente con el modelo de regresión logística analizado previamente, confirmando que 
+# la red neuronal también identifica las condiciones de presión y humedad como los factores más críticos 
+# para predecir lluvia al día siguiente, seguidos por WindGustSpeed y Sunshine.
+# %%
+# Beeswarm plot: distribución completa de SHAP values
+print("DISTRIBUCIÓN DE SHAP VALUES POR FEATURE")
+
+shap.plots.beeswarm(explanation_global, max_display=15, show=False)
+plt.title('Beeswarm Plot - Red Neuronal Optimizada', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# El Beeswarm plot revela cómo cada valor de feature impacta en las predicciones. 
+# Las redes neuronales pueden capturar relaciones no lineales, por lo que podríamos captar 
+# patrones más complejos que en la regresión logística.
+#
+# **Patrones destacados:**
+#
+# - **Pressure3pm**: Muestra una clara relación lineal inversa. Valores bajos (azul, a la izquierda) 
+# generan impactos positivos fuertes (hasta +0.75 SHAP, y un dato atípico en casi +1), mientras valores altos (rojo, a la derecha) 
+# producen impactos negativos (hasta casi -0.50 SHAP). Esto continúa reforzando lo visto hasta el momento: 
+# **la presión baja en la tarde es el indicador más fuerte de lluvia.**
+#
+# - **Humidity3pm**: Presenta una relación directa marcada. Valores altos generan impactos 
+# positivos significativos (hasta +0.60 aproximadamente), mientras valores bajos (azul) reducen la probabilidad de lluvia. 
+# La dispersión es amplia, indicando alta variabilidad en su influencia.
+#
+# - **Pressure9am**: Llamativamente contrario a Pressure3pm. Valores bajos (azul) se concentran 
+# en la izquierda (impacto negativo), valores altos (rojo) a la derecha (impacto positivo).
+#
+# - **WindGustSpeed** y **Sunshine**: Muestran patrones más complejos con dispersión bidireccional, 
+# sugiriendo que la red neuronal captura interacciones no lineales. Valores altos de WindGustSpeed 
+# (rojo) tienden a impacto positivo, mientras que poco Sunshine (azul) también favorece lluvia.
+#
+# - **Variables secundarias** (MinTemp, Cloud3pm, TempDiff): Presentan distribuciones más simétricas 
+# alrededor de cero, con impactos modestos pero contribuciones consistentes en ambas direcciones.
+#
+# El patrón general confirma que presión y humedad dominan las predicciones, pero la red neuronal 
+# captura relaciones más matizadas que un modelo lineal para variables secundarias.
+
+# %%
+# Cohortes según acierto del modelo
+y_pred_opt_nn_full = (y_pred_proba >= umbral_opt).astype(int).flatten()
+aciertos = (y_pred_opt_nn_full[:1000] == y_test.iloc[:1000].values).astype(int)
+
+aux_aciertos = [
+    "Predicción Correcta" if aciertos[i] == 1 else "Predicción Incorrecta"
+    for i in range(len(aciertos))
+]
+
+print("COHORTES POR ACIERTO DEL MODELO")
+
+shap.plots.bar(explanation_global.cohorts(aux_aciertos).abs.mean(0), show=False)
+plt.title('Importancia de Features según Acierto - Red Neuronal', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+print(f"Predicciones Correctas: {aux_aciertos.count('Predicción Correcta')}")
+print(f"Predicciones Incorrectas: {aux_aciertos.count('Predicción Incorrecta')}")
+
+# Desglose de predicciones
+tp = np.sum((y_pred_opt_nn_full[:1000] == 1) & (y_test.iloc[:1000] == 1))
+tn = np.sum((y_pred_opt_nn_full[:1000] == 0) & (y_test.iloc[:1000] == 0))
+fp = np.sum((y_pred_opt_nn_full[:1000] == 1) & (y_test.iloc[:1000] == 0))
+fn = np.sum((y_pred_opt_nn_full[:1000] == 0) & (y_test.iloc[:1000] == 1))
+
+print(f"\nDesglose:")
+print(f"Verdaderos Positivos: {tp}")
+print(f"Verdaderos Negativos: {tn}")
+print(f"Falsos Positivos: {fp}")
+print(f"Falsos Negativos: {fn}")
+
+# %% [markdown]
+# El análisis por cohortes revela qué features son más importantes cuando el modelo acierta vs cuando falla.
+# Esto puede ayudar a identificar debilidades del modelo o condiciones donde no generaliza bien.
+#
+# **Hallazgos del análisis por cohortes (800 correctas vs 200 incorrectas):**
+#
+# - **Pressure3pm**: Muestra diferencia moderada entre aciertos (0.14) y errores (0.16). En predicciones 
+# incorrectas, esta variable tiene **mayor importancia**, sugiriendo que el modelo puede "sobre-confiar" en 
+# presiones extremas que no siempre correlacionan con lluvia.
+#
+# - **Humidity3pm**: Mantiene importancia casi idéntica en ambas cohortes (~0.13), indicando que es un 
+# predictor robusto tanto en aciertos como en errores. No es una fuente principal de confusión del modelo.
+#
+# - **Pressure9am**: Importancia mayor en errores (0.11) vs aciertos (0.09), sugiriendo que 
+# la presión de las 9am puede generar señales confusas cuando no está alineada con las condiciones de la tarde.
+#
+# - **WindGustSpeed**: Notable diferencia: 0.05 en aciertos vs **0.08 en errores**. Los vientos fuertes 
+# parecen confundir al modelo. Posiblemente sea porque ocurren independientemente de si llueve o no.
+#
+# - **Variables restantes**: La mayoría (Sunshine, MinTemp, Cloud3pm, TempDiff) mantienen importancias 
+# similares en ambas cohortes, sugiriendo contribuciones estables.
+#
+# **Diagnóstico**: Los 170 falsos positivos (85% de los errores) representan un porcentaje bastante 
+# contundente de sobre-predicción de lluvia. Esto es consistente con la estrategia de optimización: 
+# al priorizar **recall** de la clase positiva mediante el **F2-Score** y usar un umbral ligeramente bajo (0.44),
+# estamos intencionalmente capturando más 
+# lluvias de las que realmente ocurren. Este trade-off es aceptable dado nuestro objetivo de **minimizar 
+# falsos negativos** (solo 30), sacrificando precisión en favor de no perder días lluviosos. Las variables 
+# Pressure3pm, Pressure9am y WindGustSpeed tienen mayor peso en estos errores, sugiriendo que condiciones 
+# atmosféricas ambiguas generan confianza excesiva del modelo incluso cuando no llueve finalmente.
+# %%
+# Cohortes según variable meteorológica clave
+variable_analizar = 'Humidity3pm' 
+mediana_variable = x_test[variable_analizar].median()
+
+aux_cohorte = [
+    f"Alta {variable_analizar}" if x_test[variable_analizar].iloc[i] >= mediana_variable 
+    else f"Baja {variable_analizar}"
+    for i in range(len(x_test[:1000]))
+]
+
+print(f"COHORTES SEGÚN MEDIANA DE {variable_analizar}")
+
+shap.plots.bar(explanation_global.cohorts(aux_cohorte).abs.mean(0), show=False)
+plt.title(f'Importancia de Features según nivel de {variable_analizar}', 
+          fontsize=14, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.show()
+
+# Estadísticas
+n_alta = aux_cohorte.count(f"Alta {variable_analizar}")
+n_baja = aux_cohorte.count(f"Baja {variable_analizar}")
+print(f"Casos con {variable_analizar} ≥ mediana: {n_alta}")
+print(f"Casos con {variable_analizar} < mediana: {n_baja}")
+
+print(f"\nMediana general de {variable_analizar}: {mediana_variable:.2f}")
+
+# %% [markdown]
+# El análisis por cohortes de variables meteorológicas revela cómo cambia la importancia de las features
+# bajo diferentes condiciones atmosféricas. Esto puede mostrar interacciones que la red neuronal captura.
+#
+# Se eligió **Humidity3pm arbitrariamente** para observar el comportamiento del modelo bajo diferentes 
+# niveles de humedad. La mediana de Humidity3pm (estandarizada) es 0.02, dividiendo el conjunto en dos 
+# grupos casi balanceados: 501 casos con alta humedad vs 499 con baja humedad.
+#
+# **Observaciones clave:**
+#
+# - **Pressure3pm**: Mantiene importancia idéntica (0.15) en ambas cohortes, confirmando que es un 
+# predictor robusto independientemente del nivel de humedad. La presión atmosférica actúa como señal 
+# consistente.
+#
+# - **Humidity3pm**: Llama la atención que tiene **mayor importancia cuando es baja** (0.14) que cuando es 
+# alta (0.12). Esto sugiere que la red neuronal captura que humedades bajas son más "informativas" para 
+# descartar lluvia, mientras que humedades altas, aunque correlacionan con lluvia, pueden ser menos 
+# discriminativas por sí solas.
+#
+# - **WindGustSpeed**: Notable diferencia: 0.06 con alta humedad vs 0.04 con baja humedad. Los vientos 
+# fuertes tienen mayor relevancia cuando ya hay humedad alta, esto lo podemos relacionar con lo observado en gráficos anteriores que
+# se había concluido que no parecían influir mucho, y en este caso se observa que sí parece intervenir, 
+# pero cuando la humedad también es alta. 
+#
+# - **MinTemp**: Mayor importancia con alta humedad (0.04) vs baja (0.02), sugiriendo que la temperatura 
+# mínima interactúa con la humedad.
+#
+# Este análisis revela que la red neuronal **captura interacciones no lineales** entre variables: la 
+# importancia relativa de features cambia dependiendo del contexto meteorológico (nivel de humedad).
+# %%
+# Resumen estadístico de SHAP values
+print("RESUMEN ESTADÍSTICO DE SHAP VALUES - RED NEURONAL")
+
+shap_df = pd.DataFrame(shap_values_2d, columns=predictoras)
+shap_stats = pd.DataFrame({
+    'Feature': predictoras,
+    'Mean |SHAP|': np.abs(shap_values_2d).mean(axis=0),
+    'Std |SHAP|': np.abs(shap_values_2d).std(axis=0),
+    'Max |SHAP|': np.abs(shap_values_2d).max(axis=0),
+    'Mean SHAP': shap_values_2d.mean(axis=0)
+})
+
+shap_stats = shap_stats.sort_values('Mean |SHAP|', ascending=False)
+print(shap_stats.head(10).to_string(index=False))
+
+# %% [markdown]
+# ### Tabla Comparativa: Regresión Logística vs Red Neuronal
+#
+# Para facilitar la comparación, mostramos nuevamente los resultados obtenidos previamente con regresión logística 
+# junto a los de la red neuronal optimizada:
+#
+# **Importancia de Features (Top 5):**
+#
+# | Ranking | Regresión Logística | Mean \|SHAP\| RL | Red Neuronal | Mean \|SHAP\| NN |
+# |---------|---------------------|------------------|--------------|------------------|
+# | 1 | Pressure3pm | 1.107 | Pressure3pm | 0.147 |
+# | 2 | Humidity3pm | 0.960 | Humidity3pm | 0.132 |
+# | 3 | Pressure9am | 0.823 | Pressure9am | 0.096 |
+# | 4 | WindGustSpeed | 0.516 | WindGustSpeed | 0.054 |
+# | 5 | Sunshine | 0.328 | Sunshine | 0.049 |
+#
+# Los valores absolutos de SHAP difieren significativamente entre modelos debido a diferencias 
+# en las escalas de trabajo (logit vs activaciones de red neuronal), pero el **ranking relativo** se 
+# mantiene consistente, confirmando que ambos modelos identifican las mismas variables como críticas 
+# para la predicción de lluvia.
+# %% [markdown]
+
+# ### Comparación con Regresión Logística
+# 
+# **Resumen:**
+# 
+# **1. Ranking de importancia - Consistencia notable:**
+# 
+# Ambos modelos identifican las mismas tres variables como más importantes:
+# - **Pressure3pm**: #1 en ambos (NN: 0.147 | RL: 1.107)
+# - **Humidity3pm**: #2 en ambos (NN: 0.132 | RL: 0.960)
+# - **Pressure9am**: #3 en ambos (NN: 0.096 | RL: 0.823)
+# 
+# El top 5 también es idéntico: las tres anteriores más WindGustSpeed (#4) y Sunshine (#5), confirmando 
+# que las condiciones atmosféricas de presión y humedad son los predictores fundamentales independientemente 
+# de la arquitectura del modelo.
+#
+# **2. Magnitud de impacto - Diferencias de escala:**
+# 
+# Los valores SHAP de la regresión logística son **7-10 veces mayores** que los de la red neuronal (ej: 
+# Pressure3pm 1.11 vs 0.15). Esto es esperado: la RL trabaja en escala logit y tiene una relación lineal 
+# directa entre features y predicción, mientras que la NN distribuye el impacto a través de múltiples capas 
+# y activaciones no lineales. Las **proporciones relativas** se mantienen, lo importante es el ranking.
+#
+# **3. Patrones de interacción - Capacidad de la NN:**
+# 
+# El beeswarm plot de la NN muestra relaciones más complejas que la RL, especialmente en variables secundarias 
+# como WindGustSpeed y MinTemp, donde la NN captura efectos bidireccionales más matizados. Sin embargo, 
+# para las variables principales (Pressure3pm, Humidity3pm), ambos modelos muestran patrones similares, 
+# sugiriendo que estas relaciones son fundamentalmente lineales o monotónicas.
+#
+# **4. Aciertos vs errores - Patrones similares:**
+# 
+# Tanto en NN como en RL, las predicciones incorrectas muestran mayor dependencia de Pressure3pm y 
+# WindGustSpeed, indicando que condiciones atmosféricas ambiguas confunden a ambos modelos de manera similar.
+#
+# **Conclusión:** La red neuronal replica el conocimiento de la regresión logística sobre qué variables 
+# son importantes, pero añade capacidad de capturar interacciones no lineales sutiles. Para este problema 
+# de predicción de lluvia, las relaciones fundamentales parecen ser suficientemente lineales, explicando 
+# por qué ambos modelos convergen al mismo ranking de importancia.
+
+# %% [markdown]
 # # MLOPS
 
 # %% [markdown]
